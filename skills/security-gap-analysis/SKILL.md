@@ -125,7 +125,7 @@ python3 <skill-dir>/scripts/gap.py inventory <repo> --mark --path tests --status
 python3 <skill-dir>/scripts/gap.py inventory <repo> --mark --kind env --status internal --notes "Reads HOME for config paths only."
 ```
 
-A mark works on the saved inventory and does not rescan the repository, so many marks are quick; `gap.py inventory <repo>` without `--mark` rescans, and `check` says when the saved inventory no longer matches the code. `--match <regex>` selects lines by their text, for the lookalikes a pattern raises in bulk (`--match '^\s*(import|from) '`, `--match '^\s*(#|//|\*)'`). A later mark replaces an earlier one, so mark the wide selection first and its exceptions after, with `--lines` for part of one file:
+A mark works on the saved inventory and does not rescan the repository, so many marks are quick; `gap.py inventory <repo>` without `--mark` rescans, and `check` says when the saved inventory no longer matches the code. `--match <regex>` selects lines by their text, for the lookalikes a pattern raises in bulk (`--match '^\s*(import|from) '`, `--match '^\s*(#|//|\*)'`). A later mark replaces an earlier one, so mark the wide selection first and its exceptions after, or add `--unreviewed` to a wide mark so that it leaves earlier marks alone, with `--lines` for part of one file:
 
 ```sh
 python3 <skill-dir>/scripts/gap.py inventory <repo> --mark --kind auth --path src/auth.py --lines 1-15 --status internal --notes "Docstring and imports."
@@ -206,7 +206,7 @@ python3 <skill-dir>/scripts/gap.py probe <repo> I1 --copy <tmp>/copy --file src/
   --old "    if role is None:" --new "    if False:" -- python -m pytest -q
 ```
 
-The script runs the command before and after the edit in the copy, puts the file back, and writes `fails without <file>:<line>` or `no test fails without <file>:<line>` into the invariant's `Test` cell, naming the line it switched off so that anyone can repeat the probe. It refuses a command that fails before the edit. Running the tests executes project code, so keep it off the network and its data in the copy. On macOS, put this in front of the command:
+The script runs the command before and after the edit in the copy, puts the file back, and writes `fails without <file>:<line>` or `no test fails without <file>:<line>` into the invariant's `Test` cell, naming the line it switched off so that anyone can repeat the probe. It refuses a command that fails before the edit. For many probes, write them to a CSV with the header `id,file,old,new` and run `gap.py probe <repo> --batch <file> --copy <tmp>/copy -- <command>`: every line is checked first, the command runs once on the untouched copy and then once per probe, which halves the time. Running the tests executes project code, so keep it off the network and its data in the copy. On macOS, put this in front of the command:
 
 ```sh
 sandbox-exec -p '(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote ip "localhost:*"))(allow network-outbound (remote unix-socket))'

@@ -265,6 +265,18 @@ class Coverage(unittest.TestCase):
         self.assertIn(("# docs at https://example.com/guide", "internal"), rows)
         self.assertIn(("requests.get(url)", "unreviewed"), rows)
 
+    def test_a_wide_mark_can_leave_earlier_marks_alone(self):
+        (self.repo / "src/a.py").write_text("eval(x)\n")
+        (self.repo / "tests").mkdir()
+        (self.repo / "tests/t.py").write_text("eval(y)\n")
+        run("files", str(self.repo), "--mark", ".", "--status", "read")
+        run("inventory", str(self.repo))
+        run("inventory", str(self.repo), "--mark", "--path", "tests", "--status", "test", "--notes", "Test code.")
+        run("inventory", str(self.repo), "--mark", "--path", ".", "--unreviewed", "--status", "internal", "--notes", "Fixture.")
+        with (self.repo / "security/inventory.csv").open() as f:
+            status = {r["path"]: r["status"] for r in csv.DictReader(f)}
+        self.assertEqual((status["tests/t.py"], status["src/a.py"]), ("test", "internal"))
+
     def test_a_boundary_file_the_profile_does_not_name_is_reported_once(self):
         (self.repo / "src/routes.py").write_text("".join(f"@app.get('/r{n}')\ndef r{n}(): pass\n" for n in range(5)))
         run("files", str(self.repo), "--mark", ".", "--status", "read")
@@ -431,6 +443,34 @@ class Design(unittest.TestCase):
         self.assertIn("problem: security/gaps.md has no entry for 1 broken or partial invariants: I3", run("check", str(self.repo), "--complete")[1])
         gaps.write_text("# Gaps\n\n## 1. Keys are shared\n\n- I3\n\n## Check outside the code\n\nNothing.\n")
         self.assertNotIn("invariant", run("check", str(self.repo), "--complete")[1])
+
+    def test_a_batch_of_probes_runs_the_baseline_once(self):
+        self.profile.write_text("# Profile\n" + INVARIANTS)
+        copy = Path(tempfile.mkdtemp()) / "copy"
+        shutil.copytree(self.repo, copy, ignore=shutil.ignore_patterns("security", ".git"))
+        log = Path(tempfile.mkdtemp()) / "runs.log"
+        count = f"open({str(log)!r}, 'a').write('run\\n'); import unittest, sys; sys.argv = ['x', '-q']; unittest.main(module=None)"
+        batch = Path(tempfile.mkdtemp()) / "probes.csv"
+        with batch.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "file", "old", "new"])
+            w.writerow(["I1", "src/app.py", "    if user != 'owner':", "    if False:"])
+            w.writerow(["I2", "src/app.py", "    return attempts <= 3", "    return True"])
+        code, out = run("probe", str(self.repo), "--batch", str(batch), "--copy", str(copy), "--", sys.executable, "-c", count)
+        self.assertEqual(code, 0, out)
+        self.assertIn("I1: tested", out)
+        self.assertIn("I2: untested", out)
+        self.assertEqual(log.read_text().count("run"), 3)  # one baseline, then one run per probe
+        table = self.profile.read_text()
+        self.assertRegex(table, r"\| I1 \|.*\| fails without src/app\.py:2 \(")
+        self.assertRegex(table, r"\| I2 \|.*\| no test fails without src/app\.py:8 \(")
+        with batch.open("a", newline="") as f:
+            csv.writer(f).writerow(["I3", "src/app.py", "absent text", "x"])
+        before = self.profile.read_text()
+        code, out = run("probe", str(self.repo), "--batch", str(batch), "--copy", str(copy), "--", sys.executable, "-c", count)
+        self.assertEqual(code, 1)
+        self.assertIn("line 4: --old must occur exactly once in src/app.py of the copy", out)
+        self.assertEqual(self.profile.read_text(), before)  # a bad line runs nothing
 
     def test_controls_lists_every_refusal_by_function_and_says_which_are_probed(self):
         (self.repo / "src/guard.py").write_text(

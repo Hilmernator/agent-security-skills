@@ -9,6 +9,7 @@
   gap.py check     REPO [--complete]
   gap.py controls  REPO
   gap.py probe     REPO INVARIANT --copy DIR --file PATH --old TEXT --new TEXT -- COMMAND ...
+  gap.py probe     REPO --batch probes.csv --copy DIR -- COMMAND ...   (header id,file,old,new; one baseline)
 
 A PREFIX is standard:id-prefix, for example asvs:V6, asvs:V6.2.1, aisvs:9, aisvs-ac:AC.4, masvs:MASVS-STORAGE.
 A PATH is a file or a directory; "." is the whole repository.
@@ -425,25 +426,43 @@ def controls(args):
 
 
 def probe(args):
-    """Switch one control off in a copy, run the tests, put the file back, and write what happened into the invariant's Test cell."""
+    """Switch controls off in a copy, one at a time, run the tests, put each file back, and write what happened into each invariant's Test cell.
+
+    One probe comes from --file/--old/--new, many from --batch (a CSV id,file,old,new): every line is checked first, the command runs
+    once on the untouched copy, then once per probe."""
     repo, copy = Path(args.repo).resolve(), Path(args.copy).resolve()
     command = args.command
     profile = repo / "security" / "profile.md"
-    text = profile.read_text() if profile.exists() else ""
-    rows, section, span = invariants(text)
-    problem = None
+    rows, _, _ = invariants(profile.read_text() if profile.exists() else "")
+    known = [r["ID"] for r in rows or []]
+    if args.batch:
+        if args.id or args.file or args.old is not None or args.new is not None:
+            sys.exit("--batch takes the probes from the file; give no ID, --file, --old or --new")
+        with open(args.batch, newline="") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames != ["id", "file", "old", "new"]:
+                sys.exit("--batch needs a CSV with the header id,file,old,new")
+            jobs = [(n, r["id"], r["file"], r["old"], r["new"]) for n, r in enumerate(reader, 2)]
+    else:
+        if not args.id or not args.file or args.old is None or args.new is None:
+            sys.exit("probe needs an invariant ID, --file, --old and --new, or --batch FILE")
+        jobs = [(None, args.id, args.file, args.old, args.new)]
+    problems_found = []
     if copy == repo or copy.is_relative_to(repo) or repo.is_relative_to(copy):
-        problem = "the copy must be a separate folder, not the repository or inside it"
+        problems_found.append("the copy must be a separate folder, not the repository or inside it")
     elif not command or any("|" in part for part in command):
-        problem = "give the test command after --, without a | (put a pipeline in a script)"
-    elif not rows or args.id not in [r["ID"] for r in rows]:
-        problem = f"profile.md Security invariants has no row {args.id}"
-    target = copy / args.file
-    original = target.read_text() if not problem and target.is_file() else None
-    if not problem and (original is None or original.count(args.old) != 1):
-        problem = f"--old must occur exactly once in {args.file} of the copy"
-    if problem:
-        print("problem: " + problem)
+        problems_found.append("give the test command after --, without a | (put a pipeline in a script)")
+    else:
+        for n, ident, rel, old, _ in jobs:
+            where = f"line {n}: " if n else ""
+            target = copy / rel
+            if ident not in known:
+                problems_found.append(f"{where}profile.md Security invariants has no row {ident}")
+            elif not target.is_file() or target.read_text().count(old) != 1:
+                problems_found.append(f"{where}--old must occur exactly once in {rel} of the copy")
+    if problems_found:
+        for p in problems_found:
+            print("problem: " + p)
         return 1
 
     def passes():
@@ -454,26 +473,33 @@ def probe(args):
     if passes() is not True:
         print("problem: the command must be one that passes before the edit, or the probe proves nothing; it failed or timed out")
         return 1
-    try:
-        target.write_text(original.replace(args.old, args.new))
-        result = passes()
-    finally:
-        target.write_text(original)
-    if result is None:
-        print("problem: the command timed out with the edit; nothing was written")
-        return 1
-    tested = result is False
-    line = original[:original.index(args.old)].count("\n") + 1
-    cell = f"{'' if tested else 'no test '}fails without {args.file}:{line} ({datetime.date.today().isoformat()}): {' '.join(command)}"
-    lines = section.split("\n")
-    for n, line in enumerate(lines):
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if line.lstrip().startswith("|") and cells[0] == args.id and len(cells) == len(INV_HEAD):
-            cells[INV_HEAD.index("Test")] = cell
-            lines[n] = "| " + " | ".join(cells) + " |"
-    profile.write_text(text[:span[0]] + "\n".join(lines) + text[span[1]:])
-    print(f"{args.id}: {'tested: the command fails without the control' if tested else 'untested: the command still passes without the control'}")
-    return 0
+    failed = 0
+    for _, ident, rel, old, new in jobs:
+        target = copy / rel
+        original = target.read_text()
+        try:
+            target.write_text(original.replace(old, new))
+            result = passes()
+        finally:
+            target.write_text(original)
+        if result is None:
+            print(f"{ident}: timed out with the edit; nothing written")
+            failed = 1
+            continue
+        tested = result is False
+        line = original[:original.index(old)].count("\n") + 1
+        cell = f"{'' if tested else 'no test '}fails without {rel}:{line} ({datetime.date.today().isoformat()}): {' '.join(command)}"
+        text = profile.read_text()
+        _, section, span = invariants(text)
+        lines = section.split("\n")
+        for k, row_line in enumerate(lines):
+            cells = [c.strip() for c in row_line.strip().strip("|").split("|")]
+            if row_line.lstrip().startswith("|") and cells[0] == ident and len(cells) == len(INV_HEAD):
+                cells[INV_HEAD.index("Test")] = cell
+                lines[k] = "| " + " | ".join(cells) + " |"
+        profile.write_text(text[:span[0]] + "\n".join(lines) + text[span[1]:])
+        print(f"{ident}: {'tested: the command fails without the control' if tested else 'untested: the command still passes without the control'}")
+    return failed
 
 
 def read_csv(path, fields):
@@ -659,7 +685,8 @@ def inventory(args):
         except re.error:
             sys.exit("--match is not a valid regular expression")
         hit = [r for r in rows if (not args.kind or r["kind"] in args.kind) and (not args.path or under(r["path"], args.path))
-               and (not args.lines or int(lo) <= int(r["line"]) <= int(hi or lo)) and (not match or match.search(r["text"]))]
+               and (not args.lines or int(lo) <= int(r["line"]) <= int(hi or lo)) and (not match or match.search(r["text"]))
+               and (not args.unreviewed or r["status"] == "unreviewed")]
         if not hit:
             sys.exit("no inventory line matches")
         for r in hit:
@@ -848,6 +875,7 @@ def main(argv=None):
     p.add_argument("--path", action="append")
     p.add_argument("--lines", help="A-B, with --path")
     p.add_argument("--match", help="a regular expression the line's text must match, such as ^import ")
+    p.add_argument("--unreviewed", action="store_true", help="mark only lines still unreviewed, leaving earlier marks alone")
     p.add_argument("--status", choices=INV_STATUSES)
     p.add_argument("--notes")
     p = sub.add_parser("check")
@@ -857,11 +885,12 @@ def main(argv=None):
     p.add_argument("repo")
     p = sub.add_parser("probe", help="switch one control off in a copy and run the tests")
     p.add_argument("repo")
-    p.add_argument("id", help="the invariant's ID in profile.md")
+    p.add_argument("id", nargs="?", help="the invariant's ID in profile.md")
     p.add_argument("--copy", required=True, help="a separate copy of the repository; the command runs there")
-    p.add_argument("--file", required=True, help="the file to edit, relative to the copy")
-    p.add_argument("--old", required=True, help="text that occurs exactly once in that file")
-    p.add_argument("--new", required=True, help="what replaces it, so that the control no longer acts")
+    p.add_argument("--file", help="the file to edit, relative to the copy")
+    p.add_argument("--old", help="text that occurs exactly once in that file")
+    p.add_argument("--new", help="what replaces it, so that the control no longer acts")
+    p.add_argument("--batch", metavar="CSV", help="many probes, one baseline: a CSV with the header id,file,old,new")
     p.add_argument("--timeout", type=int, default=600)
     argv = sys.argv[1:] if argv is None else list(argv)
     split = argv.index("--") if argv[:1] == ["probe"] and "--" in argv else len(argv)
