@@ -7,6 +7,7 @@
   gap.py files     REPO [--list STATUS] [--mark PATH ... --status S [--notes TEXT]]
   gap.py inventory REPO [--list STATUS] [--mark --kind K --path P --lines A-B --status S [--notes TEXT]]
   gap.py check     REPO [--complete]
+  gap.py controls  REPO
   gap.py probe     REPO INVARIANT --copy DIR --file PATH --old TEXT --new TEXT -- COMMAND ...
 
 A PREFIX is standard:id-prefix, for example asvs:V6, asvs:V6.2.1, aisvs:9, aisvs-ac:AC.4, masvs:MASVS-STORAGE.
@@ -376,6 +377,46 @@ def invariant_problems(repo, text):
         else:
             out += [f"{w}: {e}" for item in r["Enforced at"].split(";") if (e := evidence_problem(repo, item.strip()))]
     return out
+
+
+# Where code refuses a caller. A floor for which controls to probe, like the inventory is for ways in; not every control refuses this way.
+REFUSAL = re.compile(r"\babort\(\s*40[134]\b|compare_digest\(|\braise\s+\w*(Forbidden|Unauthorized|PermissionDenied|NotAuthenticated|AuthenticationFailed)"
+                     r"|HttpResponseForbidden|status(_code)?\s*=\s*40[13]\b|\.status\(\s*40[13]\s*\)|sendStatus\(\s*40[13]\s*\)"
+                     r"|throw\s+new\s+\w*(Forbidden|Unauthorized|AccessDenied|Authentication)|HttpStatus\.(FORBIDDEN|UNAUTHORIZED)"
+                     r"|AccessDeniedException|\bStatus(Forbidden|Unauthorized)\b")
+FUNCTION = re.compile(r"\bdef\s+(\w+)|\bfunction\s+(\w+)|\bfunc\s+(?:\([^)]*\)\s*)?(\w+)|^\s*(?:[\w<>\[\],]+\s+)+(\w+)\s*\([^;]*\)\s*(?:throws\s[\w, ]+)?\{?\s*$")
+TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|_test\.\w+$|\.(test|spec)\.\w+$|Tests?\.java$")
+
+
+def controls(args):
+    """Every refusal point in the product's own code, by function, and whether a probe has switched it off."""
+    repo = Path(args.repo)
+    profile = repo / "security" / "profile.md"
+    rows, _, _ = invariants(profile.read_text() if profile.exists() else "")
+    probed = {}
+    for r in rows or []:
+        m = re.match(r"(no test )?fails without (\S+:\d+) \(", r.get("Test", ""))
+        if m:
+            probed[m[2]] = "no test fails without it" if m[1] else "fails without it"
+    points, functions = [], set()
+    for path in repo_files(repo):
+        if not CODE.search(path) or TEST_PATH.search(path) or VENDORED & set(path.split("/")[:-1]):
+            continue
+        data, text = content(repo, path)
+        if not text:
+            continue
+        name = "(top level)"
+        for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+            if (f := FUNCTION.search(line)) and not REFUSAL.search(line):
+                name = next(g for g in f.groups() if g)
+            if REFUSAL.search(line):
+                points.append((path, n, name))
+                functions.add((path, name))
+    for path, n, name in points:
+        state = probed.get(f"{path}:{n}")
+        print(f"{path}:{n} {name}  " + (f"probed: {state}" if state else "not probed"))
+    print(f"{len(points)} refusal points in {len(functions)} functions; {sum(f'{p}:{n}' in probed for p, n, _ in points)} probed")
+    return 0
 
 
 def probe(args):
@@ -807,6 +848,8 @@ def main(argv=None):
     p = sub.add_parser("check")
     p.add_argument("repo")
     p.add_argument("--complete", action="store_true", help="also fail while a requirement is unassessed")
+    p = sub.add_parser("controls", help="list where the code refuses a caller, by function, and which a probe has switched off")
+    p.add_argument("repo")
     p = sub.add_parser("probe", help="switch one control off in a copy and run the tests")
     p.add_argument("repo")
     p.add_argument("id", help="the invariant's ID in profile.md")
@@ -847,7 +890,7 @@ def locked(repo, create):
 
 def run_command(args):
     code = {"init": init, "show": show, "set": set_, "files": files, "inventory": inventory,
-            "check": check, "probe": probe}[args.cmd](args) or 0
+            "check": check, "probe": probe, "controls": controls}[args.cmd](args) or 0
     if args.cmd in ("init", "files", "inventory"):
         ensure_ignored(args.repo, "security/")
     return code

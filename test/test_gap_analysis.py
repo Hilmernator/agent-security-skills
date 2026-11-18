@@ -432,6 +432,24 @@ class Design(unittest.TestCase):
         gaps.write_text("# Gaps\n\n## 1. Keys are shared\n\n- I3\n\n## Check outside the code\n\nNothing.\n")
         self.assertNotIn("invariant", run("check", str(self.repo), "--complete")[1])
 
+    def test_controls_lists_every_refusal_by_function_and_says_which_are_probed(self):
+        (self.repo / "src/guard.py").write_text(
+            "def login_required(view):\n    if current() is None:\n        abort(401)\n    return view\n\n\n"
+            "def check_token(sent, expected):\n    return hmac.compare_digest(sent, expected)\n")
+        (self.repo / "src/Guard.java").write_text("class Guard {\n  void deny() {\n    throw new AccessDeniedException(\"no\");\n  }\n}\n")
+        (self.repo / "src/guard.go").write_text("func Guard(w http.ResponseWriter) {\n\tw.WriteHeader(http.StatusForbidden)\n}\n")
+        (self.repo / "tests").mkdir()
+        (self.repo / "tests/test_guard.py").write_text("def test_x():\n    abort(403)\n")
+        self.profile.write_text("# Profile\n" + INVARIANTS.replace("not probed: no tests yet | holds |\n| I2", "fails without src/guard.py:3 (2026-11-18): pytest | holds |\n| I2"))
+        code, out = run("controls", str(self.repo))
+        self.assertEqual(code, 0, out)
+        self.assertIn("src/guard.py:3 login_required  probed: fails without it", out)
+        self.assertIn("src/guard.py:8 check_token  not probed", out)
+        self.assertIn("src/Guard.java:3 deny  not probed", out)
+        self.assertIn("src/guard.go:2 Guard  not probed", out)
+        self.assertNotIn("tests/test_guard.py", out)  # a test's own assertion is not a control
+        self.assertIn("4 refusal points in 4 functions; 1 probed", out)
+
     def test_a_probe_switches_a_control_off_in_a_copy_and_writes_what_the_tests_did(self):
         self.profile.write_text("# Profile\n" + INVARIANTS)
         copy = Path(tempfile.mkdtemp()) / "copy"
