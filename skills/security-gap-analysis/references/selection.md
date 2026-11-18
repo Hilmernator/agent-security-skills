@@ -11,15 +11,17 @@ Choose from the profile, not from the repository's language or framework.
 | Is serverless functions or other code behind a managed gateway | `asvs`. The infrastructure template is where routes get their authorizer and functions their permissions: read it as code. What is deployed but not in a template is `unverifiable`. |
 | Calls an LLM or other ML model, embeds text, runs agents or uses MCP | `aisvs` at the same level as `asvs`. AISVS assumes the application is also verified against ASVS. |
 | Is a native or cross-platform mobile app | `masvs` for the app; `asvs` as well when its backend is in the repository |
+| Anything with more than one kind of caller, more than one tenant, or a component it does not control | `design` at the same level as `asvs`: 34 security design requirements written for this skill, one chapter per architectural tactic of CWE-1008, each applying a design principle of NIST SP 800-53 SA-8. It asks how controls compose (tenant isolation of every store and key, identity binding of every credential, the authority of model output) and whether each control has a test. |
+| Has a workflow, a release script, a Dockerfile or an install script | `cicd` at the same level as `asvs`; see Build and release below |
 | Is built with AI coding agents in CI, or ships an AI review bot | `aisvs-ac` (AISVS Appendix C), only when the user asks. It is mostly process, so many rows become `unverifiable`. |
 
-The bundled catalogs are the full text of ASVS 5.0.0, AISVS 1.01 (with Appendix C as `aisvs-ac`) and MASVS 2.1.0. MASVS 2 assigns no levels, so every MASVS control is selected at any level. The pinned revisions are in each catalog file.
+The bundled catalogs are the full text of ASVS 5.0.0, AISVS 1.01 (with Appendix C as `aisvs-ac`) and MASVS 2.1.0, and `cicd` and `design`, written for this skill. MASVS 2 assigns no levels, so every MASVS control is selected at any level. The pinned revisions are in each catalog file.
 
 Not bundled, so name them in the profile under obligations when they apply and do not assess them from memory: CIS and cloud provider benchmarks, PCI DSS, ISO 27001, SOC 2, GDPR and other law, and any customer contract.
 
 ## Build and release
 
-No bundled standard covers the pipeline, and every product with a workflow, a release script, a Dockerfile or an install script has one. Assess what ASVS does govern there: V13 for configuration and secrets, V15.1 and V15.2 for dependencies and where they come from. Report the rest in `gaps.md` as outside the selection, from the `pipeline` lines of the inventory and the profile's Build and release section: a workflow that runs code from a pull request with secrets in reach, write permissions wider than the job needs, an action or a base image not pinned to a digest, an installer piped from the network into a shell, a published artefact nobody can verify, and secrets that live longer or reach further than their use.
+Every product with a workflow, a release script, a Dockerfile or an install script has a pipeline. Select `cicd` for it, at the same level as `asvs`: 18 controls written for this skill, one chapter per OWASP Top 10 CI/CD Security Risk, so each gap carries its `CICD-SEC` tag. Most rows can be read from the repository (workflow files, lockfiles, Dockerfiles, release scripts); what lives only in the hosting settings (branch protection, environments, installed apps) is `unverifiable` and goes under Check outside the code. ASVS still governs V13 for configuration and secrets and V15.1 and V15.2 for dependencies. Read the `pipeline` lines of the inventory and the profile's Build and release section for: a workflow that runs code from a pull request with secrets in reach, write permissions wider than the job needs, an action or a base image not pinned to a digest, an installer piped from the network into a shell, a published artefact nobody can verify, and secrets that live longer or reach further than their use.
 
 ## Level
 

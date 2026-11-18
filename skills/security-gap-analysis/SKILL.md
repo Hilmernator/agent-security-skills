@@ -1,6 +1,6 @@
 ---
 name: security-gap-analysis
-description: Find the security controls a codebase should have and does not. Assesses the code requirement by requirement against OWASP ASVS (applications and APIs), AISVS (LLM, agent, RAG and MCP features) and MASVS (mobile apps), with file:line evidence, a ledger of every file read and a pattern-built inventory of every entry point, kept in the repository's security/ folder. Use whenever the user asks what security is missing, how complete the security coverage is, for a security requirements review, an ASVS, AISVS or MASVS check, a check before a release, or to bring an existing security/ folder up to date after changes, even when no standard is named. For defects in code that exists, use local-security-review (scanners) or security-audit (source audit).
+description: Find the security controls a codebase should have and does not. Assesses the code requirement by requirement against OWASP ASVS (applications and APIs), AISVS (LLM, agent, RAG and MCP features), MASVS (mobile apps), build and release controls and security design requirements (architectural tactics and NIST design principles), states the product's security invariants and probes whether its tests notice when a control is switched off, with file:line evidence, a ledger of every file read and a pattern-built inventory of every entry point, kept in the repository's security/ folder. Use whenever the user asks what security is missing, how complete the security coverage is, for a security requirements review, an ASVS, AISVS or MASVS check, a check before a release, or to bring an existing security/ folder up to date after changes, even when no standard is named. For defects in code that exists, use local-security-review (scanners) or security-audit (source audit).
 ---
 
 # Security gap analysis
@@ -11,6 +11,8 @@ Two failures make such an analysis worthless, and the script checks for both:
 
 - **A requirement marked met without proof.** Every `met` row needs `file:line` evidence that resolves, in a file that was read.
 - **Code nobody looked at.** Every file is listed and must be read, skimmed or skipped with a reason. Every line where input can enter or code acts outside the program is found by fixed patterns and must be placed. The patterns are a floor that does not depend on what the model notices; the full read in step 4 finds the boundary no pattern names, and such a line goes into the profile's Entry points all the same.
+
+A third failure is subtler. Requirements ask whether a named control exists, and a product usually fails in how its controls compose: which tenant a signing key belongs to, whose identity a protocol session carries, what a model's output may set off, whether a share link's permission is inside its signature. Each control can pass its own requirement while the design is broken. So the profile also states the product's **security invariants**: the rules that must hold across components, every place each is enforced, how strongly, and whether any test notices when the enforcement is switched off. `gap.py probe` decides that last part by running the tests, not by reading them.
 
 A short honest list of gaps with a stated coverage is worth more than a long list of ticks.
 
@@ -90,7 +92,30 @@ Status: PROPOSED
 | P3 | GET /api/admin/users | user | list | deny | deny | allow if own tenant | src/admin.py:12; src/auth.py:30 |
 ```
 
-A cell is `allow`, `deny` or `allow if <condition>` (own tenant, owner, workspace editor or higher), and says what the product should allow, judged from its purpose, data and role names, not what the code happens to allow. `Enforced at` cites the line that enforces the row, says `no check found`, or says `public by design` for a row every role may use (sign-up, public metadata). A product with two kinds of role (tenant roles and workspace roles, or roles and token scopes) takes the kind that decides most rows as its columns, writes the other into the conditions, and names under the table which seeded or documented account stands for each column, so local-dast need not guess. The table is a fact about the product, not a finding; a row without a check is assessed in step 5 like any other gap. It stays `Status: PROPOSED` until the owner confirms it in step 8, and any later change to a row or cell sets it back to `PROPOSED`.
+A cell is `allow`, `deny` or `allow if <condition>` (own tenant, owner, workspace editor or higher), and says what the product should allow, judged from its purpose, data and role names, not what the code happens to allow. `Enforced at` cites the line that enforces the row, says `partial: <lines>` when the row is checked but not as the policy says (signed in, yet no ownership check), says `no check found`, or says `public by design` for a row every role may use (sign-up, public metadata). A product with two kinds of role (tenant roles and workspace roles, or roles and token scopes) takes the kind that decides most rows as its columns, writes the other into the conditions, and names under the table which seeded or documented account stands for each column, so local-dast need not guess. The table is a fact about the product, not a finding; a row without a check is assessed in step 5 like any other gap. It stays `Status: PROPOSED` until the owner confirms it in step 8, and any later change to a row or cell sets it back to `PROPOSED`.
+
+## Security invariants
+
+Below the Access policy, the profile states the product's security invariants: the design rules that must hold for its data to stay where it belongs, each one sentence that a reviewer could prove false with one request or one line of code. Derive them from the sections above, one question per kind of thing the product has:
+
+- **Each credential it issues** (session, access token, refresh token, API key, share link, invitation, reset token, protocol session id): what principal, tenant and purpose is it bound to, and is that binding checked on every use?
+- **Each shared store and key** (tables, object storage, caches, search and vector indexes, queues, signing keys, identity-provider configurations): how is it partitioned by tenant, and is the partition in the query or key itself?
+- **Each capability handed to someone else** (a link, a delegated token, remembered consent): what scope does it carry, and is the scope inside its integrity protection?
+- **Each value the server issues and later trusts** (a cursor, a state parameter, a signed cookie): which fields does the signature cover?
+- **Each place output from something the product does not control gains authority** (a model's reply, identity-provider claims, a webhook, a plugin): what may it trigger, and what checks or confirmation stand in between?
+- **Each per-tenant setting**: can it weaken what protects other tenants?
+- **Each long-lived session** (MCP, WebSocket, background job): is authorization checked per message?
+
+```markdown
+## Security invariants
+
+| ID | Invariant | Tactic | Enforced at | Strength | Test | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| I1 | A document is read only by members of its workspace's tenant | Authorize actors | src/permissions.py:69-80 | central | not probed: assessed in step 5 | holds |
+| I2 | A signing key verifies tokens only for the tenant that configured it | Authenticate actors | src/sso.py:40 | per-path | not probed: assessed in step 5 | broken |
+```
+
+`Tactic` is one of the eleven chapters of the `design` catalog: Identify actors, Authenticate actors, Authorize actors, Limit access, Limit exposure, Validate inputs, Verify message integrity, Encrypt data, Manage user sessions, Audit, Cross cutting. `Enforced at` lists every line that enforces the rule, or `no check found`. `Strength` is `central` (one place every path passes), `per-path` (each route repeats it, so a new route can forget it) or `none`. `Status` is `holds`, `partial` (some paths), `broken` or `unverifiable`. `Test` is written by `gap.py probe` in step 5, or says `not probed: <why>`. Write the invariants before reading the requirement catalogs, so that they come from this product and not from a checklist; aim for one per credential, store and authority, typically ten to thirty.
 
 Place every inventory line:
 
@@ -100,7 +125,7 @@ python3 <skill-dir>/scripts/gap.py inventory <repo> --mark --path tests --status
 python3 <skill-dir>/scripts/gap.py inventory <repo> --mark --kind env --status internal --notes "Reads HOME for config paths only."
 ```
 
-A later mark replaces an earlier one, so mark the wide selection first and its exceptions after, with `--lines` for part of a file:
+A mark works on the saved inventory and does not rescan the repository, so many marks are quick; `gap.py inventory <repo>` without `--mark` rescans, and `check` says when the saved inventory no longer matches the code. `--match <regex>` selects lines by their text, for the lookalikes a pattern raises in bulk (`--match '^\s*(import|from) '`, `--match '^\s*(#|//|\*)'`). A later mark replaces an earlier one, so mark the wide selection first and its exceptions after, with `--lines` for part of one file:
 
 ```sh
 python3 <skill-dir>/scripts/gap.py inventory <repo> --mark --kind auth --path src/auth.py --lines 1-15 --status internal --notes "Docstring and imports."
@@ -117,7 +142,7 @@ Done when `gap.py inventory <repo> --list unreviewed` lists no lines and `gap.py
 Use [selection](references/selection.md) to pick standards, chapters and level from the profile. Add a **Scope** section to the profile: chosen standards and level, the reason, chapters ruled out and why, and obligations this skill does not cover. Tell the user the choice in one line and continue; they can correct it.
 
 ```sh
-python3 <skill-dir>/scripts/gap.py init <repo> --select asvs:2 --select aisvs:2
+python3 <skill-dir>/scripts/gap.py init <repo> --select asvs:2 --select design:2 --select aisvs:2
 python3 <skill-dir>/scripts/gap.py set <repo> asvs:V17 --status not-applicable --notes "No WebRTC; the inventory has no WebRTC lines."
 ```
 
@@ -131,7 +156,7 @@ Work through `gap.py files <repo>`, which groups unread files by directory, larg
 
 - **read**: every line, for files that hold or touch a boundary, a control, or data handling. Workflows, Dockerfiles, infrastructure templates, manifests and build scripts are code here: they decide who can reach what, so read them.
 - **skimmed**: the file's structure and every line near a signal, for large files whose bulk is far from any boundary (rendering, UI layout, tests). Say in the notes what was looked for.
-- **skipped**: with a reason: documentation, generated files, lock files (covered by SCA), assets, fixtures.
+- **skipped**: with a reason: documentation, generated files, lock files (covered by SCA), assets, fixtures, and vendored third-party code (`vendor/`, `node_modules/`, `third_party/`), marked as one folder; it raises no inventory lines, and its known vulnerabilities are an SCA question.
 
 ```sh
 python3 <skill-dir>/scripts/gap.py files <repo> --mark crates/cli/src/serve.rs --status read
@@ -172,7 +197,26 @@ python3 <skill-dir>/scripts/gap.py set <repo> asvs:V6.3.1 --status missing --not
 
 `set` takes a chapter (`asvs:V6`), a section (`asvs:V6.5`) or one requirement, so a section the product has nothing of (no MFA, no XML) is one call with its reason. A requirement that is met by something being absent (no `eval`, no password hints) is `met` with the line that shows what is used in its place, or `not-applicable` when the product has no such feature at all.
 
-Done when `gap.py show <repo> --status unassessed` prints no rows.
+Then assess each security invariant the same way: read every line in its `Enforced at`, look for a path to the same data or action that passes none of them, and set `Status`. A `design` row and an invariant often answer each other: cite the invariant ID in the row's notes.
+
+**Probe the controls.** A control nobody tests can be deleted by the next refactor without a single red test. For each invariant that `holds` or is `partial`, find the project's own test command, make a separate copy of the repository, and switch the enforcement off with the smallest edit (a condition made `False`, a check that returns early):
+
+```sh
+python3 <skill-dir>/scripts/gap.py probe <repo> I1 --copy <tmp>/copy --file src/permissions.py \
+  --old "    if role is None:" --new "    if False:" -- python -m pytest -q
+```
+
+The script runs the command before and after the edit in the copy, puts the file back, and writes `fails without <file>:<line>` or `no test fails without <file>:<line>` into the invariant's `Test` cell, naming the line it switched off so that anyone can repeat the probe. It refuses a command that fails before the edit. Running the tests executes project code, so keep it off the network and its data in the copy. On macOS, put this in front of the command:
+
+```sh
+sandbox-exec -p '(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote ip "localhost:*"))(allow network-outbound (remote unix-socket))'
+```
+
+Elsewhere use a container or namespace without a network. If neither is available, ask before running the project's tests. When the project has no runnable tests, write `not probed: <why>` and set the `design` row on tests for controls (A11.4) to `missing`. `no test fails without …` is a gap of its own, ranked by what the invariant protects.
+
+The basic controls need the same question even when no invariant names them: the password check, the token verification, the session lookup, the role check, the one-time-code check. For each distinct function that `met` or `partial` rows of the authentication, authorization, session and token chapters cite as evidence, add an invariant for what it guarantees (`holds`, `central`) and probe it. One probe per function, not per row.
+
+Done when `gap.py show <repo> --status unassessed` prints no rows and every invariant has a `Status` and a `Test` cell.
 
 ## 6. Challenge
 
@@ -180,6 +224,7 @@ Requirements find a control where one exists. They are poor at finding the bound
 
 - **Every `met`** (`gap.py show <repo> --status met`): given the requirement text and the evidence, does the evidence prove it? Look for another route to the same resource, a configuration that disables it, an error path that skips it, code that runs only in tests. Downgrade when in doubt.
 - **Every boundary** (`gap.py inventory <repo> --list boundary`): for each route or other distinct way in that the lines belong to, name from the code who can reach it, what checks identity, what checks permission for the object asked for, what limits size, rate and cost, what validates the input before it reaches a sink, and what is logged. Each answer of "nothing" is a `missing` or `partial` row on the requirement that governs it, or a gap outside the selection. A route missing from the Access policy, or an `Enforced at` line that does not enforce its row, is corrected in the table.
+- **Every invariant that holds**: given the invariant, the profile and the cited lines, is there a route, job, tool, import path or second service that reaches the same data without passing them? Is the binding checked on every use, or only when the credential is issued?
 - **Coverage**: given the profile, `inventory.csv`, the skimmed and skipped rows of `files.csv`, and the `not-applicable` rows: is a line marked `internal` actually reachable from outside? Does a skimmed or skipped file hold a control or a boundary? Is a chapter ruled out that the inventory contradicts?
 
 Without a subagent, make each pass from the row text and the cited lines alone, in another order than you assessed them, and say in `gaps.md` that the challenge was not independent.
@@ -196,14 +241,14 @@ Start with the date, the commit, the selection, the totals and the coverage line
 - The smallest fix, with the files to change.
 - A risk-list tag where one fits (for example `LLM01`, `ASI02`, `API1`, `CICD-SEC-4`); see [selection](references/selection.md).
 
-A risk found while reading that no selected requirement covers still goes in, marked as outside the selection. Build and release gaps usually land here, because no bundled standard covers the pipeline.
+Every `broken` or `partial` invariant stands in an entry by its ID, and the invariants whose control no test notices form one entry of their own. A risk found while reading that no selected requirement covers still goes in, marked as outside the selection. Infrastructure the code deploys (cloud storage policies, network rules) usually lands here, because no bundled standard covers it; select `cicd` for the build and release pipeline.
 
 End with two sections:
 
 - **Check outside the code**: the `unverifiable` rows grouped by where to check (hosting, identity provider, process), so someone can close them.
 - **Not covered**: what this analysis cannot show, so nobody reads it as more than it is. It reads source, so it says nothing about how the running application behaves, what is deployed, or known vulnerabilities in dependencies; name the skill or check that would (see "Working with the other security skills"), and name the standards from the profile's obligations that were not assessed.
 
-Done when every `missing` and `partial` row's ID stands in an entry and every `unverifiable` row's ID under Check outside the code; `gap.py check --complete` fails on an ID that `gaps.md` does not name.
+Done when every `missing` and `partial` row's ID and every `broken` and `partial` invariant's ID stands in an entry, and every `unverifiable` row's ID under Check outside the code. `gap.py check --complete` reads `gaps.md` by its `## ` headings and fails on a missing or partial ID that no entry names (the summary above the first heading and Not covered do not count) and on an unverifiable ID that the section whose heading starts with "Check outside the code" does not name.
 
 ## 8. Check and report
 

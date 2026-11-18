@@ -6,11 +6,13 @@
   gap.py files     REPO [--list STATUS] [--mark PATH ... --status S [--notes TEXT]]
   gap.py inventory REPO [--list STATUS] [--mark --kind K --path P --lines A-B --status S [--notes TEXT]]
   gap.py check     REPO [--complete]
+  gap.py probe     REPO INVARIANT --copy DIR --file PATH --old TEXT --new TEXT -- COMMAND ...
 
 A PREFIX is standard:id-prefix, for example asvs:V6, asvs:V6.2.1, aisvs:9, aisvs-ac:AC.4, masvs:MASVS-STORAGE.
 A PATH is a file or a directory; "." is the whole repository.
 """
 import argparse
+import contextlib
 import csv
 import datetime
 import hashlib
@@ -37,8 +39,12 @@ SECURITY_FILES = ["profile.md", "files.csv", "inventory.csv", "requirements.csv"
 # findings.csv is written by ledger.py of local-security-review and local-dast; this is its header.
 FINDING_FIELDS = ["fingerprint", "skill", "rule", "path", "status", "basis", "sha", "first_seen", "last_seen", "note"]
 SKIP_DIRS = {".git", "node_modules", "target", "dist", "build", ".venv", "venv", "__pycache__", "vendor", ".next"}
+# Third-party code checked in beside the product's own. Its files are still listed (skip the folder in one mark), but raise no inventory lines.
+VENDORED = {"vendor", "node_modules", "third_party"}
+# A licence header's URL is not a network call.
+LICENCE_URL = re.compile(r"(apache\.org|opensource\.org|gnu\.org|creativecommons\.org|mozilla\.org/MPL|eclipse\.org/legal)/", re.I)
 CODE = re.compile(r"\.(m|c)?(t|j)sx?$|\.(py|rs|go|java|kt|kts|rb|php|cs|swift|m|mm|c|cc|cpp|h|hpp|html?|vue|svelte|astro"
-                  r"|sh|ps1|ya?ml|toml|tf|xml|plist|entitlements|gradle)$|(^|/)Dockerfile[^/]*$|(^|/)package\.json$")
+                  r"|sh|ps1|ya?ml|toml|tf|xml|plist|entitlements|gradle|conf|conf\.template)$|(^|/)Dockerfile[^/]*$|(^|/)package\.json$")
 # Where input from outside can enter, or where code acts on something outside. Recall matters more than
 # precision: every hit is either named in the profile or marked internal or test with a reason.
 SIGNALS = [
@@ -52,11 +58,12 @@ SIGNALS = [
               r"|^\s*Type:\s*(Http)?Api\s*$|^\s*Type:\s*(SQS|SNS|S3|Kinesis|DynamoDB|Schedule|EventBridgeRule)\s*$"
               r"|AWS::(ApiGateway|ApiGatewayV2|AppSync|Lambda::Url)\b"
               r"|export\s+(async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b|^\s*[\"']use server[\"']"
-              r"|\b(public|protected)Procedure\b|@(Get|Post|Put|Patch|Delete|Request)Mapping\("),
+              r"|\b(public|protected)Procedure\b|@(Get|Post|Put|Patch|Delete|Request)Mapping\("
+              r"|^\s*location\s+(=|~\*?|\^~)?\s*\S+\s*\{|\bre_path\(|\burl\(\s*r?[\"']\^"),
     ("process", r"Command::new\(|\bsubprocess\.|os\.system\(|os\.popen\(|child_process|\bexecFile(Sync)?\(|(?<!::)\bspawn(Sync)?\("
                 r"|\bexecSync\(|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|NSTask|Process\(\)"),
     ("network-out", r"https?://[a-z0-9-]+(\.[a-z0-9-]+)+|reqwest::|ureq::|\bfetch\(|axios|requests\.(get|post|put|delete|request)"
-                    r"|urllib\.request|httpx\.|http\.Client|URLSession|aiohttp"),
+                    r"|urllib\.request|httpx\.|http\.Client|URLSession|aiohttp|\bopenConnection\(|\bnew\s+URL\("),
     ("deserialize", r"pickle\.loads?|torch\.load|yaml\.load\(|marshal\.loads|jsonpickle|ObjectInputStream|BinaryFormatter"
                     r"|\bunserialize\(|joblib\.load|from_pretrained|\.safetensors|NSKeyedUnarchiver"),
     ("html-sink", r"innerHTML|outerHTML|insertAdjacentHTML|document\.write|dangerouslySetInnerHTML|v-html|\|\s*safe\b"
@@ -68,7 +75,8 @@ SIGNALS = [
            r"|\bmessages\.create\(|chat\.completions|\.choices\[0\]|\bgenerate_content\(|\binvoke_model\("),
     # A file opened or served under a name that is built at run time. Favour recall: a constant path is marked internal.
     ("fs-path", r"createReadStream\(|\breadFile(Sync)?\(|\bopen\(\s*os\.path\.join\(|\bopen\(\s*\w+\s*/\s*\w+|decodeURIComponent\("
-                r"|\bfs::(read|read_to_string|write|remove_file)\(|\bFile::(open|create)\("),
+                r"|\bfs::(read|read_to_string|write|remove_file)\(|\bFile::(open|create)\(|\bFileResponse\("
+                r"|\bnew\s+File(Input|Output)Stream\(|\bFiles\.(newInputStream|readAllBytes|copy)\("),
     ("auth", r"\b(request|req)\.headers\b|jwt\.|jsonwebtoken|jose\b|passport\.|Auth0|Cognito|OAuth|oidc|openid|[Aa]uthorization|Bearer|getServerSession"
              r"|NextAuth|msal|api[_-]?key|password|Set-Cookie|session\["),
     ("headers", r"Access-Control-Allow|Content-Security-Policy|\bcors\(|X-Frame-Options|Strict-Transport-Security"),
@@ -80,7 +88,7 @@ SIGNALS = [
                     r"|InsecureSkipVerify:\s*true|NODE_TLS_REJECT_UNAUTHORIZED|NSAllowsArbitraryLoads"
                     r"|usesCleartextTraffic=\"true\""),
     ("cli", r"\benv::args(_os)?\(|\bclap::|derive\([^)]*\bParser\b|import argparse|argparse\.|sys\.argv|process\.argv|\bclick\.(command|group)"
-            r"|\btyper\.|io::stdin\(|sys\.stdin|process\.stdin"),
+            r"|\btyper\.|io::stdin\(|sys\.stdin|process\.stdin|\.cli\.command\("),
     ("upload", r"\bmultipart\b|MultipartFile|\bmulter\b|UploadFile|formidable|busboy|\.extractall\(|tarfile\.open|zipfile\.ZipFile|ZipArchive"
                r"|ZipInputStream|tar::Archive|\btar\s+-?x|\bunzip\b|[Cc]ontent-[Dd]isposition"
                r"|\brequest\.files\b|\breq\.files?\b|\bsend_file\(|\bsend_from_directory\(|\bsendFile\("),
@@ -283,8 +291,108 @@ def policy_problems(repo, text):
             if set(row[4:-1]) != {"allow"}:
                 out.append(f"{where} {row[0]}: public by design needs allow in every role")
         elif row[-1] != "no check found":
-            out += [f"{where} {row[0]}: {e}" for item in row[-1].split(";") if (e := evidence_problem(repo, item.strip()))]
+            # partial: <lines> when the row is checked, but not as the policy says (signed in, yet no ownership check)
+            out += [f"{where} {row[0]}: {e}" for item in row[-1].removeprefix("partial:").split(";") if (e := evidence_problem(repo, item.strip()))]
     return out
+
+
+INV_HEAD = ["ID", "Invariant", "Tactic", "Enforced at", "Strength", "Test", "Status"]
+INV_STATES = ["holds", "partial", "broken", "unverifiable"]
+STRENGTHS = ["central", "per-path", "none"]
+TEST_CELL = re.compile(r"(no test )?fails without \S+:\d+ \(\d{4}-\d{2}-\d{2}\): \S.*|not probed: \S.*")
+
+
+def invariants(text):
+    """The rows of the profile's Security invariants table as dicts, the section's text and its span, or ([], None, None)."""
+    section = re.search(r"^## Security invariants[ \t]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    if not section:
+        return [], None, None
+    table = [[c.strip() for c in line.strip().strip("|").split("|")] for line in section[1].splitlines() if line.lstrip().startswith("|")]
+    if not table or table[0] != INV_HEAD:
+        return None, section[1], section.span(1)
+    return [dict(zip(INV_HEAD, row)) | {"_cells": len(row)} for row in table[2:]], section[1], section.span(1)
+
+
+def invariant_problems(repo, text):
+    """The profile's Security invariants, if it has them: each a design rule of this product, where it is enforced, how strongly, whether a test notices its removal."""
+    rows, _, _ = invariants(text)
+    where = "profile.md Security invariants"
+    if rows is None:
+        return [f"{where}: the header must be | {' | '.join(INV_HEAD)} |"]
+    tactics = {r["chapter"] for r in catalogs().get("design", {}).values()}
+    ids = [r["ID"] for r in rows]
+    out = [f"{where}: row ID {i} is used twice" for i in sorted({i for i in ids if ids.count(i) > 1})]
+    for r in rows:
+        w = f"{where} {r['ID']}"
+        if r["_cells"] != len(INV_HEAD):
+            out.append(f"{w}: {r['_cells']} cells, the header has {len(INV_HEAD)}")
+            continue
+        if r["Status"] not in INV_STATES:
+            out.append(f'{w}: status "{r["Status"]}" is not {", ".join(INV_STATES[:-1])} or {INV_STATES[-1]}')
+        if r["Tactic"] not in tactics:
+            out.append(f'{w}: tactic "{r["Tactic"]}" is not one of the architectural tactics ({", ".join(sorted(tactics))})')
+        if r["Strength"] not in STRENGTHS:
+            out.append(f'{w}: strength "{r["Strength"]}" is not {", ".join(STRENGTHS[:-1])} or {STRENGTHS[-1]}')
+        if not TEST_CELL.fullmatch(r["Test"]):
+            out.append(f"{w}: the Test cell is written by gap.py probe, or says not probed: <why>")
+        if r["Enforced at"] == "no check found":
+            if r["Status"] in ("holds", "partial"):
+                out.append(f"{w}: {r['Status']} needs the lines that enforce it")
+        else:
+            out += [f"{w}: {e}" for item in r["Enforced at"].split(";") if (e := evidence_problem(repo, item.strip()))]
+    return out
+
+
+def probe(args):
+    """Switch one control off in a copy, run the tests, put the file back, and write what happened into the invariant's Test cell."""
+    repo, copy = Path(args.repo).resolve(), Path(args.copy).resolve()
+    command = args.command
+    profile = repo / "security" / "profile.md"
+    text = profile.read_text() if profile.exists() else ""
+    rows, section, span = invariants(text)
+    problem = None
+    if copy == repo or copy.is_relative_to(repo) or repo.is_relative_to(copy):
+        problem = "the copy must be a separate folder, not the repository or inside it"
+    elif not command or any("|" in part for part in command):
+        problem = "give the test command after --, without a | (put a pipeline in a script)"
+    elif not rows or args.id not in [r["ID"] for r in rows]:
+        problem = f"profile.md Security invariants has no row {args.id}"
+    target = copy / args.file
+    original = target.read_text() if not problem and target.is_file() else None
+    if not problem and (original is None or original.count(args.old) != 1):
+        problem = f"--old must occur exactly once in {args.file} of the copy"
+    if problem:
+        print("problem: " + problem)
+        return 1
+
+    def passes():
+        try:
+            return subprocess.run(command, cwd=copy, stdin=subprocess.DEVNULL, capture_output=True, timeout=args.timeout).returncode == 0
+        except subprocess.TimeoutExpired:
+            return None
+    if passes() is not True:
+        print("problem: the command must be one that passes before the edit, or the probe proves nothing; it failed or timed out")
+        return 1
+    try:
+        target.write_text(original.replace(args.old, args.new))
+        result = passes()
+    finally:
+        target.write_text(original)
+    if result is None:
+        print("problem: the command timed out with the edit; nothing was written")
+        return 1
+    tested = result is False
+    line = original[:original.index(args.old)].count("\n") + 1
+    cell = f"{'' if tested else 'no test '}fails without {args.file}:{line} ({datetime.date.today().isoformat()}): {' '.join(command)}"
+    lines = section.split("\n")
+    for n, line in enumerate(lines):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.lstrip().startswith("|") and cells[0] == args.id and len(cells) == len(INV_HEAD):
+            cells[INV_HEAD.index("Test")] = cell
+            lines[n] = "| " + " | ".join(cells) + " |"
+    profile.write_text(text[:span[0]] + "\n".join(lines) + text[span[1]:])
+    print(f"{args.id}: {'tested: the command fails without the control' if tested else 'untested: the command still passes without the control'}")
+    return 0
 
 
 def read_csv(path, fields):
@@ -412,14 +520,14 @@ def scan(repo):
     """Every signal line in the repository's code, keyed so that a mark survives the line moving."""
     hits, seen = [], {}
     for p in repo_files(repo):
-        if not CODE.search(p):
+        if not CODE.search(p) or VENDORED & set(p.split("/")[:-1]):
             continue
         data, text = content(repo, p)
         if not text or len(data) > 2 << 20:
             continue
         for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
             for kind, rx in SIGNAL_RES:
-                if rx.search(line):
+                if rx.search(line) and not (kind == "network-out" and LICENCE_URL.search(line)):
                     t = line.strip()[:160]
                     k = (kind, p, t)
                     seen[k] = seen.get(k, 0) + 1
@@ -453,15 +561,24 @@ def sync_inventory(repo):
 
 def inventory(args):
     repo = Path(args.repo)
-    rows = sync_inventory(repo)
+    # A mark works on the saved inventory: rescanning a large repository on every mark took seconds each, an hour for a few thousand lines.
+    # Running gap.py inventory without --mark rescans, and check says when the saved inventory no longer matches the code.
+    saved = read_csv(inventory_path(repo), INV_FIELDS) if args.mark else None
+    rows = saved if saved is not None else sync_inventory(repo)
     if args.mark:
-        if not args.status or not (args.kind or args.path):
-            sys.exit("--mark needs --status and at least one of --kind and --path")
+        if not args.status or not (args.kind or args.path or args.match):
+            sys.exit("--mark needs --status and at least one of --kind, --path and --match")
         if args.status in {"internal", "test"} and not args.notes:
             sys.exit(f"{args.status} needs --notes saying why")
+        if args.lines and (not args.path or len(args.path) != 1 or not (repo / args.path[0]).is_file()):
+            sys.exit("--lines needs --path to name one file; mark a folder without --lines")
         lo, _, hi = (args.lines or "").partition("-")
+        try:
+            match = re.compile(args.match) if args.match else None
+        except re.error:
+            sys.exit("--match is not a valid regular expression")
         hit = [r for r in rows if (not args.kind or r["kind"] in args.kind) and (not args.path or under(r["path"], args.path))
-               and (not args.lines or int(lo) <= int(r["line"]) <= int(hi or lo))]
+               and (not args.lines or int(lo) <= int(r["line"]) <= int(hi or lo)) and (not match or match.search(r["text"]))]
         if not hit:
             sys.exit("no inventory line matches")
         for r in hit:
@@ -517,9 +634,11 @@ def coverage_problems(repo, reqs):
     profile = repo / "security" / "profile.md"
     named = profile.read_text() if profile.exists() else ""
     out += policy_problems(repo, named)
+    out += invariant_problems(repo, named)
     pending = [r for r in irows if r["status"] == "unreviewed"]
     if pending:
         out.append(f"{len(pending)} inventory lines are unreviewed (gap.py inventory)")
+    unnamed = {}
     for r in irows:
         where = f'{r["kind"]} {r["path"]}:{r["line"]}'
         if r["status"] not in INV_STATUSES:
@@ -527,13 +646,51 @@ def coverage_problems(repo, reqs):
         elif r["status"] in {"internal", "test"} and not r["notes"].strip():
             out.append(f"{where}: {r['status']} needs notes saying why")
         elif r["status"] == "boundary" and r["path"] not in named:
-            out.append(f"{where}: marked boundary, but profile.md does not name {r['path']}")
+            unnamed[r["path"]] = unnamed.get(r["path"], 0) + 1
+    out += [f"{p}: {n} boundary lines, but profile.md does not name the file (write its full path)" for p, n in sorted(unnamed.items())]
     for r in reqs:
         for e in evidence_items(r):
             m = EVIDENCE.match(e)
             if m and status.get(m["path"]) not in {"read", "skimmed", None}:
                 out.append(f'{r["standard"]}:{r["id"]}: evidence {m["path"]} is {status[m["path"]]}, not read')
     return out, (frows, irows)
+
+
+def gaps_sections(text):
+    """gaps.md cut at its level-2 headings: the entries, and the Check outside the code section. The summary above the first heading and Not covered are neither."""
+    entries, outside = [], []
+    for part in re.split(r"^(?=## (?!#))", text, flags=re.M)[1:]:
+        heading = part.splitlines()[0][3:].strip().lower()
+        if heading.startswith("check outside the code"):
+            outside.append(part)
+        elif not heading.startswith("not covered"):
+            entries.append(part)
+    return "\n".join(entries), "\n".join(outside)
+
+
+def gaps_problems(repo, rows):
+    """Step 7's rule: each missing or partial row is named in an entry, each unverifiable row under Check outside the code."""
+    gaps = repo / "security/gaps.md"
+    entries, outside = gaps_sections(gaps.read_text(errors="replace") if gaps.exists() else "")
+
+    def named(row, text):
+        return re.search(rf"(?<![\w.]){re.escape(row['id'])}(?![\w]|\.\d)", text)
+
+    def listed(ids):
+        return ", ".join(ids[:8]) + (" …" if len(ids) > 8 else "")
+    out = []
+    no_entry = [r["id"] for r in rows if r["status"] in {"missing", "partial"} and not named(r, entries)]
+    if no_entry:
+        out.append(f"security/gaps.md has no entry for {len(no_entry)} missing or partial rows: {listed(no_entry)}")
+    profile = repo / "security/profile.md"
+    rules, _, _ = invariants(profile.read_text() if profile.exists() else "")
+    open_rules = [r["ID"] for r in rules or [] if r.get("Status") in ("broken", "partial") and not named({"id": r["ID"]}, entries)]
+    if open_rules:
+        out.append(f"security/gaps.md has no entry for {len(open_rules)} broken or partial invariants: {listed(open_rules)}")
+    not_outside = [r["id"] for r in rows if r["status"] == "unverifiable" and not named(r, outside)]
+    if not_outside:
+        out.append(f"security/gaps.md does not list {len(not_outside)} unverifiable rows under Check outside the code: {listed(not_outside)}")
+    return out
 
 
 def check(args):
@@ -569,12 +726,7 @@ def check(args):
     if args.complete and total["unassessed"]:
         errors.append(f'{total["unassessed"]} requirements are unassessed')
     if args.complete:
-        gaps = repo / "security/gaps.md"
-        text = gaps.read_text(errors="replace") if gaps.exists() else ""
-        unnamed = [r["id"] for r in rows if r["status"] in {"missing", "partial", "unverifiable"}
-                   and not re.search(rf"(?<![\w.]){re.escape(r['id'])}(?![\w]|\.\d)", text)]
-        if unnamed:
-            errors.append(f"security/gaps.md does not name {len(unnamed)} open rows: {', '.join(unnamed[:8])}{' …' if len(unnamed) > 8 else ''}")
+        errors += gaps_problems(repo, rows)
     if ledgers:
         frows, irows = ledgers
         print(coverage_line(frows))
@@ -613,14 +765,53 @@ def main(argv=None):
     p.add_argument("--kind", action="append", choices=[k for k, _ in SIGNALS])
     p.add_argument("--path", action="append")
     p.add_argument("--lines", help="A-B, with --path")
+    p.add_argument("--match", help="a regular expression the line's text must match, such as ^import ")
     p.add_argument("--status", choices=INV_STATUSES)
     p.add_argument("--notes")
     p = sub.add_parser("check")
     p.add_argument("repo")
     p.add_argument("--complete", action="store_true", help="also fail while a requirement is unassessed")
-    args = ap.parse_args(argv)
+    p = sub.add_parser("probe", help="switch one control off in a copy and run the tests")
+    p.add_argument("repo")
+    p.add_argument("id", help="the invariant's ID in profile.md")
+    p.add_argument("--copy", required=True, help="a separate copy of the repository; the command runs there")
+    p.add_argument("--file", required=True, help="the file to edit, relative to the copy")
+    p.add_argument("--old", required=True, help="text that occurs exactly once in that file")
+    p.add_argument("--new", required=True, help="what replaces it, so that the control no longer acts")
+    p.add_argument("--timeout", type=int, default=600)
+    argv = sys.argv[1:] if argv is None else list(argv)
+    split = argv.index("--") if argv[:1] == ["probe"] and "--" in argv else len(argv)
+    args = ap.parse_args(argv[:split])
+    args.command = argv[split + 1:]
+    with locked(Path(args.repo), create=args.cmd in ("init", "files", "inventory")):
+        return run_command(args)
+
+
+@contextlib.contextmanager
+def locked(repo, create):
+    """One gap.py at a time per repository. Two calls at once each reread a CSV, changed it and wrote it back, and the later one lost the other's marks."""
+    try:
+        import fcntl
+    except ImportError:  # ponytail: no lock where fcntl is missing (Windows); run one call at a time there
+        yield
+        return
+    folder = repo / "security"
+    if create and repo.is_dir():
+        folder.mkdir(exist_ok=True)
+    if not folder.is_dir():  # nothing written yet, so nothing to race
+        yield
+        return
+    handle = os.open(folder, os.O_RDONLY)  # the folder itself is the lock, so no lock file appears in it
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(handle)
+
+
+def run_command(args):
     code = {"init": init, "show": show, "set": set_, "files": files, "inventory": inventory,
-            "check": check}[args.cmd](args) or 0
+            "check": check, "probe": probe}[args.cmd](args) or 0
     if args.cmd in ("init", "files", "inventory"):
         ensure_ignored(args.repo, "security/")
     return code

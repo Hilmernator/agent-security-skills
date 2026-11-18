@@ -5,7 +5,7 @@
 """Maintainer tool: download the pinned standards and write catalogs/*.json.
 
 Run with `uv run scripts/build_catalogs.py`. The skill itself never downloads anything;
-it reads the catalogs this script wrote. To update a standard, change its pin below,
+it reads the catalogs this script wrote. cicd.json and design.json are written by hand and are not touched here. To update a standard, change its pin below,
 rerun, review the diff, and update SOURCES.md.
 """
 import json

@@ -1,0 +1,136 @@
+{
+ "standard": "cicd",
+ "name": "Build and release controls, one chapter per OWASP Top 10 CI/CD Security Risk",
+ "version": "1",
+ "revision": null,
+ "source": "Written for this skill. The chapters follow the risk list of https://owasp.org/www-project-top-10-ci-cd-security-risks/; no OWASP text is copied.",
+ "license": "MIT, as the rest of this repository",
+ "requirements": [
+  {
+   "id": "C1.1",
+   "chapter": "C1 Flow control (CICD-SEC-1)",
+   "section": "C1 Flow control (CICD-SEC-1)",
+   "level": 1,
+   "text": "A change reaches the default branch or a release branch only through a reviewed pull request; no workflow, bot or person pushes to it without review."
+  },
+  {
+   "id": "C1.2",
+   "chapter": "C1 Flow control (CICD-SEC-1)",
+   "section": "C1 Flow control (CICD-SEC-1)",
+   "level": 2,
+   "text": "A release or production deployment runs only from a protected branch or a protected tag, and needs an approval or a protected environment."
+  },
+  {
+   "id": "C2.1",
+   "chapter": "C2 Identity and access in the pipeline (CICD-SEC-2)",
+   "section": "C2 Identity and access in the pipeline (CICD-SEC-2)",
+   "level": 1,
+   "text": "Every workflow and job declares the least token permissions it needs (for example `permissions:` in GitHub Actions) and does not rely on a default token that can write."
+  },
+  {
+   "id": "C2.2",
+   "chapter": "C2 Identity and access in the pipeline (CICD-SEC-2)",
+   "section": "C2 Identity and access in the pipeline (CICD-SEC-2)",
+   "level": 2,
+   "text": "Each identity the pipeline uses (a deploy key, a service account, a cloud role) is scoped to the one repository, environment and action it serves."
+  },
+  {
+   "id": "C3.1",
+   "chapter": "C3 Dependency chain (CICD-SEC-3)",
+   "section": "C3 Dependency chain (CICD-SEC-3)",
+   "level": 1,
+   "text": "Every build installs dependencies from a lockfile with exact versions and integrity hashes, and runs package install scripts only where they were reviewed."
+  },
+  {
+   "id": "C3.2",
+   "chapter": "C3 Dependency chain (CICD-SEC-3)",
+   "section": "C3 Dependency chain (CICD-SEC-3)",
+   "level": 2,
+   "text": "Package sources are named explicitly, so that an internal package name can never be resolved from a public registry."
+  },
+  {
+   "id": "C4.1",
+   "chapter": "C4 Poisoned pipeline execution (CICD-SEC-4)",
+   "section": "C4 Poisoned pipeline execution (CICD-SEC-4)",
+   "level": 1,
+   "text": "Code from a pull request, a fork or a comment never runs in a job that holds secrets or a token that can write; triggers such as `pull_request_target`, `workflow_run` and comment commands check out only trusted code."
+  },
+  {
+   "id": "C4.2",
+   "chapter": "C4 Poisoned pipeline execution (CICD-SEC-4)",
+   "section": "C4 Poisoned pipeline execution (CICD-SEC-4)",
+   "level": 1,
+   "text": "Values an outsider controls (branch names, pull request titles and bodies, commit messages, issue text) never reach a shell, a script or an expression without quoting, for example through an environment variable."
+  },
+  {
+   "id": "C5.1",
+   "chapter": "C5 Access the pipeline grants (CICD-SEC-5)",
+   "section": "C5 Access the pipeline grants (CICD-SEC-5)",
+   "level": 2,
+   "text": "Each job can reach only the secrets, environments, cloud roles and network it needs, and production credentials are available only to a protected environment."
+  },
+  {
+   "id": "C6.1",
+   "chapter": "C6 Credential hygiene (CICD-SEC-6)",
+   "section": "C6 Credential hygiene (CICD-SEC-6)",
+   "level": 1,
+   "text": "No credential is committed to the repository or written into a workflow, a build file, an image layer or a log."
+  },
+  {
+   "id": "C6.2",
+   "chapter": "C6 Credential hygiene (CICD-SEC-6)",
+   "section": "C6 Credential hygiene (CICD-SEC-6)",
+   "level": 2,
+   "text": "The pipeline authenticates to clouds and registries with short-lived federated credentials (OIDC) instead of long-lived keys, and each trust policy names the repository and the branch or environment it trusts."
+  },
+  {
+   "id": "C7.1",
+   "chapter": "C7 Build system configuration (CICD-SEC-7)",
+   "section": "C7 Build system configuration (CICD-SEC-7)",
+   "level": 2,
+   "text": "Self-hosted runners are ephemeral or isolated per job, and do not run jobs for pull requests from outside the repository."
+  },
+  {
+   "id": "C7.2",
+   "chapter": "C7 Build system configuration (CICD-SEC-7)",
+   "section": "C7 Build system configuration (CICD-SEC-7)",
+   "level": 2,
+   "text": "Caches and artifacts written by untrusted jobs (pull requests) are never read by trusted jobs (release, deploy)."
+  },
+  {
+   "id": "C8.1",
+   "chapter": "C8 Third-party services and actions (CICD-SEC-8)",
+   "section": "C8 Third-party services and actions (CICD-SEC-8)",
+   "level": 1,
+   "text": "Every third-party action, orb, plugin or reusable workflow is pinned to a full commit SHA or a digest, not to a tag or a branch."
+  },
+  {
+   "id": "C8.2",
+   "chapter": "C8 Third-party services and actions (CICD-SEC-8)",
+   "section": "C8 Third-party services and actions (CICD-SEC-8)",
+   "level": 2,
+   "text": "Third-party apps and integrations with access to the repository or the pipeline are listed with the permissions they hold, and none holds more than its use needs."
+  },
+  {
+   "id": "C9.1",
+   "chapter": "C9 Artifact integrity (CICD-SEC-9)",
+   "section": "C9 Artifact integrity (CICD-SEC-9)",
+   "level": 1,
+   "text": "Base images and downloaded tools are pinned by digest or checksum and verified before use; no script is piped from the network into a shell."
+  },
+  {
+   "id": "C9.2",
+   "chapter": "C9 Artifact integrity (CICD-SEC-9)",
+   "section": "C9 Artifact integrity (CICD-SEC-9)",
+   "level": 2,
+   "text": "Published artifacts (packages, images, release files) are signed or carry provenance that a consumer can verify."
+  },
+  {
+   "id": "C10.1",
+   "chapter": "C10 Logging and visibility (CICD-SEC-10)",
+   "section": "C10 Logging and visibility (CICD-SEC-10)",
+   "level": 2,
+   "text": "Pipeline runs, approvals and changes to pipeline configuration are logged where the owner can review them, and secrets are masked in job logs."
+  }
+ ]
+}

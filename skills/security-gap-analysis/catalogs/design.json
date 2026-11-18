@@ -1,0 +1,248 @@
+{
+ "standard": "design",
+ "name": "Security design requirements, one chapter per architectural tactic of CWE-1008, each applying an NIST SP 800-53 SA-8 principle",
+ "version": "1",
+ "revision": null,
+ "source": "Written for this skill. Chapters follow the categories of the CWE view 1008, Architectural Concepts (https://cwe.mitre.org/data/definitions/1008.html); sections name the SA-8 security engineering principle of NIST SP 800-53 Rev. 5 each requirement applies. No text of either is copied.",
+ "license": "MIT, as the rest of this repository",
+ "requirements": [
+  {
+   "id": "A1.1",
+   "chapter": "Identify actors",
+   "section": "SA-8(22) Accountability and Traceability",
+   "level": 1,
+   "text": "Verify that every request is attributed to exactly one identity, decided in one place, and that no later code replaces it with an identity taken from another source the caller can influence (a session id, a header, a body field, a claim)."
+  },
+  {
+   "id": "A1.2",
+   "chapter": "Identify actors",
+   "section": "SA-8(16) Self-reliant Trustworthiness",
+   "level": 2,
+   "text": "Verify that each credential the system issues (a session, an access token, a share link, an API key, a protocol session) is bound to the principal, tenant and purpose it was issued for, and that every use checks that binding."
+  },
+  {
+   "id": "A1.3",
+   "chapter": "Identify actors",
+   "section": "SA-8(10) Hierarchical Trust",
+   "level": 2,
+   "text": "Verify that identities asserted by another system (an identity provider, a gateway header, a webhook sender) are accepted only from the party trusted for that tenant, and that their attributes cannot raise privilege here unless this system maps them."
+  },
+  {
+   "id": "A2.1",
+   "chapter": "Authenticate actors",
+   "section": "SA-8(19) Continuous Protection",
+   "level": 1,
+   "text": "Verify that every way of acting for a principal (browser session, API token, single sign-on, OAuth, API key, protocol session) authenticates as strongly as the most sensitive action behind it requires, and that no alternative path skips a factor."
+  },
+  {
+   "id": "A2.2",
+   "chapter": "Authenticate actors",
+   "section": "SA-8(6) Minimized Sharing",
+   "level": 2,
+   "text": "Verify that the keys and secrets that verify each authentication path belong to one tenant or one relying party and are looked up by that owner, never by a value the caller sends."
+  },
+  {
+   "id": "A2.3",
+   "chapter": "Authenticate actors",
+   "section": "SA-8(19) Continuous Protection",
+   "level": 1,
+   "text": "Verify that recovery and linking flows (password reset, email change, account linking, trusted devices) bind every step to the account that started it and are at least as strong as signing in."
+  },
+  {
+   "id": "A3.1",
+   "chapter": "Authorize actors",
+   "section": "SA-8(5) Efficiently Mediated Access",
+   "level": 1,
+   "text": "Verify that every access to a protected resource passes one mediation point that all routes, background jobs and tool calls use, so that no path reaches the data around it."
+  },
+  {
+   "id": "A3.2",
+   "chapter": "Authorize actors",
+   "section": "SA-8(16) Self-reliant Trustworthiness",
+   "level": 1,
+   "text": "Verify that authorization decisions are made from server-side state (memberships, ownership, roles), never from a value the caller supplies about themselves or the object."
+  },
+  {
+   "id": "A3.3",
+   "chapter": "Authorize actors",
+   "section": "SA-8(23) Secure Defaults",
+   "level": 1,
+   "text": "Verify that the default for a resource, a route or a role without an explicit rule is to deny."
+  },
+  {
+   "id": "A3.4",
+   "chapter": "Authorize actors",
+   "section": "SA-8(15) Predicate Permission",
+   "level": 2,
+   "text": "Verify that a capability handed to someone else (a share link, an invitation, a delegated token) carries its scope and permission inside its integrity protection and is checked against that scope on every use."
+  },
+  {
+   "id": "A3.5",
+   "chapter": "Authorize actors",
+   "section": "SA-8(15) Predicate Permission",
+   "level": 2,
+   "text": "Verify that remembered or delegated consent is keyed by the exact client identity and the scopes granted, not by a name or another value a client chooses."
+  },
+  {
+   "id": "A4.1",
+   "chapter": "Limit access",
+   "section": "SA-8(6) Minimized Sharing",
+   "level": 1,
+   "text": "Verify that every shared store (database tables, object storage, caches, search indexes, vector stores, queues, key sets) is partitioned by tenant in the query or the key itself, not only in the code path that reaches it."
+  },
+  {
+   "id": "A4.2",
+   "chapter": "Limit access",
+   "section": "SA-8(14) Least Privilege",
+   "level": 2,
+   "text": "Verify that each service, worker and pipeline identity holds only the permissions its own function needs, so that compromising one component does not grant another's."
+  },
+  {
+   "id": "A4.3",
+   "chapter": "Limit access",
+   "section": "SA-8(26) Performance Security",
+   "level": 2,
+   "text": "Verify that costly or abusable operations (sign-in, reset, upload, model calls, exports, outbound requests) are bounded per principal and per tenant."
+  },
+  {
+   "id": "A5.1",
+   "chapter": "Limit exposure",
+   "section": "SA-8(33) Minimization",
+   "level": 1,
+   "text": "Verify that each interface returns only the fields its caller may see, decided by an explicit output shape and not by serializing a stored record."
+  },
+  {
+   "id": "A5.2",
+   "chapter": "Limit exposure",
+   "section": "SA-8(3) Modularity and Layering",
+   "level": 2,
+   "text": "Verify that internal services, administrative interfaces and debugging features cannot be reached through the interfaces exposed to users or the internet."
+  },
+  {
+   "id": "A5.3",
+   "chapter": "Limit exposure",
+   "section": "SA-8(3) Modularity and Layering",
+   "level": 2,
+   "text": "Verify that content an outsider supplies (uploads, rendered markup, model output) is served from another origin or with headers that keep it from acting in the application's origin."
+  },
+  {
+   "id": "A6.1",
+   "chapter": "Validate inputs",
+   "section": "SA-8(1) Clear Abstractions",
+   "level": 1,
+   "text": "Verify that each trust boundary named in the profile has one place where input crossing it becomes typed values, and that code past that place does not reinterpret the raw input."
+  },
+  {
+   "id": "A6.2",
+   "chapter": "Validate inputs",
+   "section": "SA-8(1) Clear Abstractions",
+   "level": 1,
+   "text": "Verify that values used to build queries, commands, paths, URLs or templates are bound as parameters or chosen from an allow list, including the names of sort and filter fields."
+  },
+  {
+   "id": "A6.3",
+   "chapter": "Validate inputs",
+   "section": "SA-8(18) Trusted Communications Channels",
+   "level": 2,
+   "text": "Verify that outbound requests the server makes on a caller's behalf (webhooks, metadata, previews, key sets) go only to destinations allowed by a rule the caller cannot change."
+  },
+  {
+   "id": "A7.1",
+   "chapter": "Verify message integrity",
+   "section": "SA-8(20) Secure Metadata Management",
+   "level": 1,
+   "text": "Verify that every value the server issues and later trusts (a token, a link, a cursor, a state parameter, a cookie) is protected by a signature or MAC that covers every field the server acts on."
+  },
+  {
+   "id": "A7.2",
+   "chapter": "Verify message integrity",
+   "section": "SA-8(6) Minimized Sharing",
+   "level": 2,
+   "text": "Verify that integrity keys are separated by purpose, so that a value signed for one use is not accepted for another."
+  },
+  {
+   "id": "A8.1",
+   "chapter": "Encrypt data",
+   "section": "SA-8(23) Secure Defaults",
+   "level": 1,
+   "text": "Verify that secrets and keys come from a secrets store or the deployment's configuration, differ between environments, and have no working default in the code."
+  },
+  {
+   "id": "A8.2",
+   "chapter": "Encrypt data",
+   "section": "SA-8(6) Minimized Sharing",
+   "level": 2,
+   "text": "Verify that credentials, tokens and personal data are hashed or encrypted at rest and in transit, with key ownership that matches the tenancy model."
+  },
+  {
+   "id": "A9.1",
+   "chapter": "Manage user sessions",
+   "section": "SA-8(19) Continuous Protection",
+   "level": 1,
+   "text": "Verify that a session's identity, tenant and assurance level change only together with a new session id, and that sign-out, a password change and revocation end every session and token derived from the old state."
+  },
+  {
+   "id": "A9.2",
+   "chapter": "Manage user sessions",
+   "section": "SA-8(19) Continuous Protection",
+   "level": 2,
+   "text": "Verify that long-lived protocol sessions (MCP, WebSocket, streaming, background jobs started by a user) check the caller's authorization on each message, not only when they start."
+  },
+  {
+   "id": "A10.1",
+   "chapter": "Audit",
+   "section": "SA-8(22) Accountability and Traceability",
+   "level": 2,
+   "text": "Verify that security decisions (sign-in, refused access, permission changes, exports, administrative actions) are logged with actor, tenant and object, and that logs never hold secrets or tokens."
+  },
+  {
+   "id": "A10.2",
+   "chapter": "Audit",
+   "section": "SA-8(22) Accountability and Traceability",
+   "level": 2,
+   "text": "Verify that a tenant or an attacker cannot forge, alter or erase log entries about others through any input the system logs."
+  },
+  {
+   "id": "A11.1",
+   "chapter": "Cross cutting",
+   "section": "SA-8(24) Secure Failure and Recovery",
+   "level": 1,
+   "text": "Verify that every failure inside a security check (an exception, a timeout, missing configuration, an unreachable dependency) ends in refusal and not in the unprotected path."
+  },
+  {
+   "id": "A11.2",
+   "chapter": "Cross cutting",
+   "section": "SA-8(10) Hierarchical Trust",
+   "level": 1,
+   "text": "Verify that output from a model, a plugin or another component the system does not control is treated as untrusted input: it cannot trigger an action, a write or a call with a user's authority without a check or the user's confirmation."
+  },
+  {
+   "id": "A11.3",
+   "chapter": "Cross cutting",
+   "section": "SA-8(7) Reduced Complexity",
+   "level": 2,
+   "text": "Verify that each security mechanism has one implementation that every component reuses, rather than copies that can drift apart."
+  },
+  {
+   "id": "A11.4",
+   "chapter": "Cross cutting",
+   "section": "SA-8(21) Self-analysis",
+   "level": 2,
+   "text": "Verify that each security control the profile relies on has a test that fails when the control is removed."
+  },
+  {
+   "id": "A11.5",
+   "chapter": "Cross cutting",
+   "section": "SA-8(17) Secure Distributed Composition",
+   "level": 2,
+   "text": "Verify that settings a tenant can configure (identity provider, webhooks, redirect addresses, prompts, integrations) cannot weaken the controls that protect other tenants or the platform."
+  },
+  {
+   "id": "A11.6",
+   "chapter": "Cross cutting",
+   "section": "SA-8(9) Trusted Components",
+   "level": 3,
+   "text": "Verify that every outside component the system trusts (an identity provider, a model provider, a payment or mail service, a base image) is named in the profile with what it is trusted for, and that the system limits what a misbehaving one can do."
+  }
+ ]
+}
