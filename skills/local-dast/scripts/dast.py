@@ -28,7 +28,7 @@ ARCHIVE_SHA256 = "94c8f767b1c2e94f0db66b3ae56514d5e3f5a728ee1b6c798e0c8fe2d61fbf
 ADDONS = {"automation", "callhome", "commonlib", "network", "pscan", "pscanrules", "exim", "reports"}
 MAX_CASES, MAX_BODY, MAX_SENT = 50, 1024 * 1024, 64 * 1024
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
-OPTIONAL = {"headers", "headers_env", "expect_json", "requires", "method", "json", "json_env", "form", "form_env", "multipart", "session", "expect_text", "forbid_text",
+OPTIONAL = {"headers", "headers_env", "expect_json", "requires", "after", "method", "json", "json_env", "form", "form_env", "multipart", "session", "expect_text", "forbid_text",
             "expect_headers", "forbid_headers", "session_token", "same_as", "take", "expect_canary", "forbid_canary", "policy"}
 # JSON-RPC methods that only read or shake hands, as MCP names them. A POST that carries one of these and nothing else needs no --allow-writes.
 RPC_READS = ("initialize", "ping", "tools/list", "resources/list", "resources/templates/list", "resources/read", "prompts/list", "prompts/get")
@@ -39,8 +39,8 @@ TOKEN = re.compile(r"[\x21-\x7e]{1,8192}\Z")  # what may follow "Bearer " in a h
 RUN_SECONDS, REQUEST_SECONDS, INTERVAL = 60, 5, 0.5
 LABEL = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 NAME = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
-# A taken value fills one path segment: no slash, no leading dot, nothing a URL reads as structure.
-TAKEN = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._~-]{0,127}\Z")
+# A taken value fills one path segment: no slash, no leading dot, nothing a URL reads as structure. Long enough for a JWT.
+TAKEN = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._~-]{0,4095}\Z")
 REFERENCE = re.compile(r"\{([^{}]*)\}")
 WHOLE = re.compile(r"\{([a-z][a-z0-9_]{0,31})\}\Z")  # a value that is one {name} and nothing else
 # Where a whole value may be a {name}. In the first two the taken value keeps its type; in the rest it is sent or compared as text.
@@ -230,24 +230,24 @@ def take_value(where, headers, text, parsed):
 
 
 def only(plan, wanted):
-    """The plan cut down to the named cases and everything they rest on: their requires, the case they are compared with, the cases their values come from,
-    and every earlier case that changes state or shares a session with a kept case. A re-read judges a write that may fail its own check, so requires cannot name it."""
+    """The plan cut down to the named cases and what they name: their requires and after, the case they are compared with, the cases their
+    values come from, and the first case of each session they use (its sign-in). A re-read names the write it judges in after."""
     cases = {case["id"]: case for case in plan["cases"]}
     if set(wanted) - cases.keys():
         raise PlanError("--only names a case the plan does not hold")
     source = {name: case["id"] for case in plan["cases"] for name in case.get("take", {})}
-    order = [case["id"] for case in plan["cases"]]
+    sign_in = {}
+    for case in plan["cases"]:
+        if "session" in case:
+            sign_in.setdefault(case["session"], case["id"])
     keep, queue = set(), list(wanted)
     while queue:
         name = queue.pop()
         if name not in keep:
             keep.add(name)
             case = cases[name]
-            queue += [*case.get("requires", []), *([case["same_as"]] if "same_as" in case else []), *(source[ref] for ref in references(case) if ref in source)]
-        if not queue:
-            sessions = {cases[name].get("session") for name in keep} - {None}
-            queue = [case["id"] for case in plan["cases"][:max(order.index(name) for name in keep)]
-                     if case["id"] not in keep and (changes_state(case) or case.get("session") in sessions)]
+            queue += [*case.get("requires", []), *case.get("after", []), *([case["same_as"]] if "same_as" in case else []),
+                      *(source[ref] for ref in references(case) if ref in source), *([sign_in[case["session"]]] if "session" in case else [])]
     return {**plan, "cases": [case for case in plan["cases"] if case["id"] in keep]}
 
 
@@ -335,6 +335,9 @@ def check_plan(plan, writes, remote, policy, absent, seen):
         dependencies = case.get("requires", [])
         if not isinstance(dependencies, list) or any(not isinstance(n, str) or n not in names for n in dependencies):
             raise ValueError("requires must refer to preceding cases")
+        after = case.get("after", [])
+        if not isinstance(after, list) or any(not isinstance(n, str) or n not in names for n in after):
+            raise ValueError("after must list preceding cases")
         if "same_as" in case and (not isinstance(case["same_as"], str) or case["same_as"] not in names):
             raise ValueError("same_as must name one preceding case")
         headers = case.get("headers_env", {})
@@ -379,8 +382,8 @@ def check_plan(plan, writes, remote, policy, absent, seen):
         body, _ = sent_body(case, absent)
         if body is not None and len(body) > MAX_SENT:
             raise ValueError("Request body exceeds 64 KiB")
-        if "session" in case and (not isinstance(case["session"], str) or not LABEL.fullmatch(case["session"]) or "cookie" in lowered):
-            raise ValueError("session must be a lowercase label, without a Cookie header of its own")
+        if "session" in case and (not isinstance(case["session"], str) or not LABEL.fullmatch(case["session"]) or "cookie" in {k.lower() for k in headers}):
+            raise ValueError("session must be a lowercase label; a cookie it adds to the session's own goes in headers, not headers_env")
         for field in ("expect_text", "forbid_text"):
             items = case.get(field, ["x"])
             if not isinstance(items, list) or not 1 <= len(items) <= 20 or any(not isinstance(item, str) or not 1 <= len(item) <= 256 for item in items):
@@ -420,7 +423,9 @@ def request(origin, case, timeout, cookies=None, bearer=None, mcp_session=None):
     if mcp_session and "mcp-session-id" not in {key.lower() for key in headers}:
         headers["Mcp-Session-Id"] = mcp_session
     if cookies:
-        headers["Cookie"] = "; ".join(f"{name}={value}" for name, value in cookies.items())
+        # A Cookie in the case's own headers (a planted device cookie) is sent after the session's cookies.
+        own = [headers.pop(key) for key in [k for k in headers if k.lower() == "cookie"]]
+        headers["Cookie"] = "; ".join([f"{name}={value}" for name, value in cookies.items()] + own)
     payload, kind = sent_body(case)
     if payload is not None:
         if len(payload) > MAX_SENT:  # a taken value can lengthen the body after the plan was checked
@@ -509,7 +514,7 @@ def remember_cookies(store, headers):
 
 def capture(plan, writes=False, remote=None, policy=None):
     origin = validate_plan(plan, writes, remote, policy)
-    observations, entries, passed, sessions, bearers, answers, mcp, values = [], [], set(), {}, {}, {}, {}, {}
+    observations, entries, passed, ran, sessions, bearers, answers, mcp, values = [], [], set(), set(), {}, {}, {}, {}, {}
     deadline = time.monotonic() + RUN_SECONDS
     for case in plan["cases"]:
         row = {"id": case["id"], "state": "not-run"}
@@ -518,6 +523,9 @@ def capture(plan, writes=False, remote=None, policy=None):
         observations.append(row)
         if any(name not in passed for name in case.get("requires", [])):
             row["gap"] = "prerequisite-failed"
+            continue
+        if any(name not in ran for name in case.get("after", [])):
+            row["gap"] = "prerequisite-not-run"
             continue
         if references(case) - values.keys():
             row["gap"] = "value-not-taken"
@@ -558,8 +566,12 @@ def capture(plan, writes=False, remote=None, policy=None):
                     checks["canary_absent"] = not seen & set(case["forbid_canary"])
             for field, check, wanted in (("expect_headers", "headers", True), ("forbid_headers", "headers_absent", False)):
                 if field in case:
-                    checks[check] = all(any(key.lower() == name.lower() and part.lower() in value.lower() for key, value in headers) is wanted
-                                        for name, part in case[field].items())
+                    # Which headers failed, by the plan's own name; the value may be a taken one, so it never stands here.
+                    wrong = [name for name, part in case[field].items()
+                             if any(key.lower() == name.lower() and part.lower() in value.lower() for key, value in headers) is not wanted]
+                    checks[check] = not wrong
+                    if wrong:
+                        row[check + "_failed"] = wrong
             if "expect_json" in case or "session_token" in case or "take" in case:
                 try:
                     actual = answer_json(headers, body)
@@ -586,6 +598,7 @@ def capture(plan, writes=False, remote=None, policy=None):
             if 300 <= status < 400:
                 # A redirect is the case's result, expected (a login that answers 303) or not (a sign-in that should have been refused): never a gap.
                 row["redirect"] = "redirect-not-followed"
+            ran.add(case["id"])
             if row["state"] == "pass":
                 passed.add(case["id"])
             row["body_sha256"] = answers[case["id"]][1]
@@ -828,7 +841,7 @@ def main():
                         help="security/profile.md of the source repository; its Access policy table judges the cases tagged with policy")
     parser.add_argument("--out", type=Path, metavar="FOLDER", help="An existing private folder to make the run directory in, instead of the system's temporary folder")
     parser.add_argument("--only", action="append", metavar="CASE",
-                        help="Run this case and what it rests on (its requires, the case it is compared with, the cases its values come from); may be given more than once")
+                        help="Run this case and what it names (requires, after, same_as, the cases its values come from, the sign-in of its session); may be given more than once")
     parser.add_argument("--remote", metavar="ORIGIN",
                         help="Test this one https://hostname, a pre-production environment the user named, instead of a loopback port")
     args = parser.parse_args()

@@ -10,7 +10,7 @@ Beside each identity's valid access token, these cases need tokens the endpoint 
 
 - an expired access token of a test account;
 - an access token issued for another app client or audience of the same provider;
-- an ID token of a test account, when the endpoint expects access tokens;
+- an ID token of a test account, when the endpoint expects access tokens (when the authorization server issues no ID tokens, say so; it is not a coverage gap);
 - an access token without the scope the route or tool needs.
 
 A malformed token needs no issuer: `DAST_BROKEN_AUTH='Bearer not-a-token'`.
@@ -29,6 +29,8 @@ Each token the user cannot issue is a coverage gap in the delivery, with the que
 | Does each identity see only its own tools? | `tools/list` for each identity; its own tool in `expect_text` is the control | `forbid_text` finds no tool that belongs to another identity or role |
 | Is a session tied to its identity? | On a server with sessions: a `tools/list` with the owner's `session` and the peer's `Authorization` | 400, 401, 403 or 404, and `forbid_text` finds no tool name |
 | Can one identity use a tool on another's object? | Needs `--allow-writes`: a `tools/call` by the peer on the owner's object, with a tool the user has said is safe to call; the owner's own call is the control | The answer is an error and `forbid_text` finds none of the owner's values |
+
+Every `tools/call` needs `--allow-writes`, a tool that only reads included: the runner goes by the JSON-RPC method, not by what the tool does. In remote mode, ask the user before calling even a reading tool.
 
 A tool call that is refused often answers 200 with the refusal in the body. Assert on the body: `"expect_json": {"result": {"isError": true}}` for a tool error, or the `code` of the JSON-RPC `error` object, as the server's code decides.
 

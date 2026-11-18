@@ -178,7 +178,9 @@ class Flow(BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.paths.append(self.path)
         self.server.heads.append(dict(self.headers))
-        if self.path == "/state":
+        if self.path == "/token":
+            self.answer(200, json.dumps({"access_token": "eyJ" + "a" * 700 + ".synthetic-jwt-canary.sig"}))
+        elif self.path == "/state":
             self.answer(200, '{"version": 3}', **{"Set-Cookie": "sid=synthetic-sid-canary; Path=/; HttpOnly"})
         elif self.path == "/consent":
             self.answer(200, '<form><input type="hidden" name="csrf_token" value="synthetic-csrf-canary"></form>', "text/html")
@@ -820,15 +822,47 @@ class DastTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             dast.only(plan, ["absent"])
 
-    def test_only_keeps_the_earlier_writes_and_the_sessions_a_case_stands_on(self):
+    def test_only_keeps_what_a_case_names_and_the_sign_in_of_each_session_it_uses(self):
         def case(name, method="GET", **more):
             return {"id": name, "path": "/" + name, "expect_status": [200], **({} if method == "GET" else {"method": method, "json": {"a": 1}}), **more}
         plan = {"target": "http://127.0.0.1:48173", "cases": [
             case("owner-login", "POST", session="owner"), case("peer-login", "POST", session="peer"), case("peer-page", session="peer"),
-            case("peer-write", "PATCH", session="peer", expect_status=[403]), case("unrelated-read"), case("reread", session="owner"), case("later-write", "POST")]}
-        # The re-read judges the peer's write, which needs the peer's session; neither is in requires, and the write may fail its own check.
-        self.assertEqual([c["id"] for c in dast.only(plan, ["reread"])["cases"]], ["owner-login", "peer-login", "peer-page", "peer-write", "reread"])
-        self.assertEqual([c["id"] for c in dast.only(plan, ["unrelated-read"])["cases"]], ["owner-login", "peer-login", "peer-page", "peer-write", "unrelated-read"])
+            case("peer-write", "PATCH", session="peer", expect_status=[403]), case("unrelated-write", "POST"),
+            case("reread", session="owner", after=["peer-write"]), case("later-write", "POST")]}
+        # The re-read names the write it judges in after; the write brings its session's sign-in. Other writes and reads stay out.
+        self.assertEqual([c["id"] for c in dast.only(plan, ["reread"])["cases"]], ["owner-login", "peer-login", "peer-write", "reread"])
+        self.assertEqual([c["id"] for c in dast.only(plan, ["peer-page"])["cases"]], ["peer-login", "peer-page"])
+        self.assertEqual([c["id"] for c in dast.only(plan, ["unrelated-write"])["cases"]], ["unrelated-write"])
+
+    def test_after_waits_for_a_case_to_run_whatever_its_result(self):
+        server, target = self.server()
+        plan = {"target": target, "cases": [
+            {"id": "flaw-shown", "path": "/", "expect_status": [404]},
+            {"id": "impact", "path": "/", "expect_status": [200], "after": ["flaw-shown"]},
+            {"id": "needs-pass", "path": "/", "expect_status": [200], "requires": ["flaw-shown"]},
+            {"id": "after-unrun", "path": "/", "expect_status": [200], "after": ["needs-pass"]}]}
+        with patch.object(dast, "INTERVAL", 0):
+            rows, _ = dast.capture(plan)
+        self.assertEqual([(row["state"], row.get("gap")) for row in rows],
+                         [("assertion-failed", None), ("pass", None), ("not-run", "prerequisite-failed"), ("not-run", "prerequisite-not-run")])
+        for after in (["later"], "flaw-shown", [1]):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                dast.validate_plan({"target": target, "cases": [{"id": "a", "path": "/", "expect_status": [200], "after": after}, {"id": "later", "path": "/", "expect_status": [200]}]})
+
+    def test_a_session_can_carry_a_cookie_of_its_own_and_a_long_token_can_be_taken(self):
+        server, target = self.server(Flow)
+        plan = {"target": target, "cases": [
+            {"id": "sign-in", "path": "/state", "session": "victim", "expect_status": [200]},
+            {"id": "token", "path": "/token", "expect_status": [200], "take": {"jwt": ["access_token"]}},
+            {"id": "with-device", "path": "/x", "session": "victim", "headers": {"Cookie": "device=planted", "Authorization": "Bearer {jwt}"}, "expect_status": [200]}]}
+        with patch.object(dast, "INTERVAL", 0):
+            rows, _ = dast.capture(plan)
+        self.assertEqual([row["state"] for row in rows], ["pass"] * 3)
+        sent = server.heads[-1]
+        self.assertEqual(sent["Cookie"], "sid=synthetic-sid-canary; device=planted")
+        self.assertTrue(sent["Authorization"].startswith("Bearer eyJ") and sent["Authorization"].endswith(".synthetic-jwt-canary.sig"))
+        self.assertNotIn("canary", json.dumps(rows))
+        self.assertIsNone(dast.TAKEN.fullmatch("a" * 4097))
 
     def test_only_asks_for_the_variables_of_the_cases_it_keeps_and_an_error_names_case_and_variable(self):
         server, target = self.server()
@@ -865,7 +899,7 @@ class DastTests(unittest.TestCase):
         with self.assertRaises(ValueError):  # a deployed host is named on the command line, never in a header
             dast.validate_plan({"target": REMOTE, "cases": [{"id": "bad", "path": "/", "expect_status": [200], "headers": {"Host": "other.example"}}]}, remote=REMOTE)
         broken = ({"headers": {"X-A": "{nobody}"}}, {"headers": {"X-A": "a{b"}}, {"headers": {"X-A": "a\r\nX-B: c"}}, {"headers": {"Content-Length": "1"}}, {"headers": {"X-A": 1}},
-                  {"headers": {}}, {"headers": {"authorization": "x"}, "headers_env": {"Authorization": "DAST_PEER_AUTH"}}, {"headers": {"Cookie": "a=b"}, "session": "peer"},
+                  {"headers": {}}, {"headers": {"authorization": "x"}, "headers_env": {"Authorization": "DAST_PEER_AUTH"}},
                   {"multipart": {"a": "{nobody}"}})
         for number, fields in enumerate(broken):
             with self.subTest(change=number), self.assertRaises(ValueError):
@@ -886,7 +920,8 @@ class DastTests(unittest.TestCase):
         # The cookie did not change and the version is still 3: the first is what a session-fixation case fails on.
         self.assertEqual(again["checks"], {"status": True, "text": False, "absent": False, "headers": True, "headers_absent": False, "json": True})
         self.assertEqual((again["text_failed"], again["absent_failed"]), ([2], [2]))
-        self.assertIn("text (2), absent (2), headers_absent", (directory / "review.md").read_text())
+        self.assertEqual(again["headers_absent_failed"], ["Set-Cookie"])  # the plan's own header name, never the value
+        self.assertIn("text (2), absent (2), headers_absent (Set-Cookie)", (directory / "review.md").read_text())
         self.assertEqual(server.heads[-1]["Cookie"], "sid=synthetic-sid-canary")
         self.assertNotIn("canary", (directory / "report.json").read_text())
         self.assertEqual(report["incomplete_because"], ["zap: http-only-requested"])
