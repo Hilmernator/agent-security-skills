@@ -389,33 +389,38 @@ TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|_test\.\
 
 
 def controls(args):
-    """Every refusal point in the product's own code, by function, and whether a probe has switched it off."""
+    """Every function of the product's own code that refuses a caller, and whether a probe has switched off any line of it."""
     repo = Path(args.repo)
     profile = repo / "security" / "profile.md"
     rows, _, _ = invariants(profile.read_text() if profile.exists() else "")
     probed = {}
     for r in rows or []:
-        m = re.match(r"(no test )?fails without (\S+:\d+) \(", r.get("Test", ""))
+        m = re.match(r"(no test )?fails without (\S+):(\d+) \(", r.get("Test", ""))
         if m:
-            probed[m[2]] = "no test fails without it" if m[1] else "fails without it"
-    points, functions = [], set()
+            probed[(m[2], int(m[3]))] = "no test fails without it" if m[1] else "fails without it"
+    found = {}  # (path, first line of the function) -> [name, refusal lines, last line]
     for path in repo_files(repo):
         if not CODE.search(path) or TEST_PATH.search(path) or VENDORED & set(path.split("/")[:-1]):
             continue
         data, text = content(repo, path)
         if not text:
             continue
-        name = "(top level)"
-        for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+        lines = data.decode("utf-8", "replace").splitlines()
+        start, name = 1, "(top level)"
+        for n, line in enumerate(lines, 1):
             if (f := FUNCTION.search(line)) and not REFUSAL.search(line):
-                name = next(g for g in f.groups() if g)
+                if (path, start) in found:
+                    found[(path, start)][2] = n - 1
+                start, name = n, next(g for g in f.groups() if g)
             if REFUSAL.search(line):
-                points.append((path, n, name))
-                functions.add((path, name))
-    for path, n, name in points:
-        state = probed.get(f"{path}:{n}")
-        print(f"{path}:{n} {name}  " + (f"probed: {state}" if state else "not probed"))
-    print(f"{len(points)} refusal points in {len(functions)} functions; {sum(f'{p}:{n}' in probed for p, n, _ in points)} probed")
+                found.setdefault((path, start), [name, [], len(lines)])[1].append(n)
+    done = 0
+    for (path, start), (name, refusals, last) in found.items():
+        # ponytail: a function ends where the next one starts; a nested helper or a class body can blur that. Good enough to say probed or not.
+        state = next((v for (p, n), v in probed.items() if p == path and start <= n <= last), None)
+        done += state is not None
+        print(f"{path}:{start} {name} (refuses at {', '.join(map(str, refusals))})  " + (f"probed: {state}" if state else "not probed"))
+    print(f"{sum(len(v[1]) for v in found.values())} refusal points in {len(found)} functions; {done} function{'' if done == 1 else 's'} probed")
     return 0
 
 

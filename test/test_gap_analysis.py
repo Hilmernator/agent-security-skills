@@ -440,15 +440,16 @@ class Design(unittest.TestCase):
         (self.repo / "src/guard.go").write_text("func Guard(w http.ResponseWriter) {\n\tw.WriteHeader(http.StatusForbidden)\n}\n")
         (self.repo / "tests").mkdir()
         (self.repo / "tests/test_guard.py").write_text("def test_x():\n    abort(403)\n")
-        self.profile.write_text("# Profile\n" + INVARIANTS.replace("not probed: no tests yet | holds |\n| I2", "fails without src/guard.py:3 (2026-11-18): pytest | holds |\n| I2"))
+        # The probe switched the condition off, the line above the refusal: it still covers the function.
+        self.profile.write_text("# Profile\n" + INVARIANTS.replace("not probed: no tests yet | holds |\n| I2", "fails without src/guard.py:2 (2026-11-18): pytest | holds |\n| I2"))
         code, out = run("controls", str(self.repo))
         self.assertEqual(code, 0, out)
-        self.assertIn("src/guard.py:3 login_required  probed: fails without it", out)
-        self.assertIn("src/guard.py:8 check_token  not probed", out)
-        self.assertIn("src/Guard.java:3 deny  not probed", out)
-        self.assertIn("src/guard.go:2 Guard  not probed", out)
+        self.assertIn("src/guard.py:1 login_required (refuses at 3)  probed: fails without it", out)
+        self.assertIn("src/guard.py:7 check_token (refuses at 8)  not probed", out)
+        self.assertIn("src/Guard.java:2 deny (refuses at 3)  not probed", out)
+        self.assertIn("src/guard.go:1 Guard (refuses at 2)  not probed", out)
         self.assertNotIn("tests/test_guard.py", out)  # a test's own assertion is not a control
-        self.assertIn("4 refusal points in 4 functions; 1 probed", out)
+        self.assertIn("4 refusal points in 4 functions; 1 function probed", out)
 
     def test_a_probe_switches_a_control_off_in_a_copy_and_writes_what_the_tests_did(self):
         self.profile.write_text("# Profile\n" + INVARIANTS)
