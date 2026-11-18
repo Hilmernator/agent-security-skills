@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-security-skills",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Security skills for coding agents: a scanner-backed code review with proof tests, a gap analysis against OWASP ASVS, AISVS and MASVS with file:line evidence, a bounded runtime test (DAST) of a disposable local copy, and hooks that stop an agent from weakening its own checks.",
   "author": {
     "name": "Rasmus Hilmersson"

@@ -2,6 +2,28 @@
 
 What changed in each version, newest first, and what an existing installation must do about it.
 
+## 0.4.0
+
+security-gap-analysis gets a design layer. Requirements ask whether a named control exists; products usually fail in how controls compose, and in a blind run on a planted-flaw application of 2026-11-18 rows were correctly `met` inside functions whose design was broken (cross-tenant signing keys, a protocol session that replaced the token's identity, consent remembered by name). Three additions, all in the existing files:
+
+- `--select design:<level>`: 34 security design requirements written for this skill, one chapter per architectural tactic of CWE-1008 (Architectural Concepts), each applying a principle of NIST SP 800-53 SA-8.
+- A `## Security invariants` table in `profile.md`: the product's own design rules, each with every enforcement point, its strength (`central`, `per-path`, `none`), a test cell and a status. `gap.py check` checks its shape and evidence, and `--complete` needs every broken or partial invariant in an entry of `gaps.md`.
+- `gap.py probe`: switches one control off in a copy, runs the project's tests before and after, puts the file back, and writes into the invariant's Test cell whether any test failed. The cell names the line it switched off, so anyone can repeat the probe. On the same application's own suite, 10 of 20 correctly built controls could be switched off with all 180 tests still passing (measured 2026-11-18). The skill also has a basic control behind each `met` authentication, authorization and session row probed, one probe per function; that instruction is not measured yet.
+
+
+security-gap-analysis on a larger codebase (a blind run on a five-service practice application of about 41,000 own lines plus 129,000 vendored, 2026-11-18): `gap.py` now takes a lock on the `security/` folder, because two calls at once each rewrote the same CSV and one run lost 1,215 inventory marks without a word. Vendored folders (`vendor/`, `node_modules/`, `third_party/`) raise no inventory lines (the run had 1,420 of them), nor do licence-header URLs. New patterns find nginx `location` blocks, Django `re_path` and `url(` routes, `FileResponse`, Java's `openConnection` and `new URL(`. `inventory --mark` works on the saved inventory instead of rescanning the repository each time (a second run spent over an hour placing 3,140 lines at about 3 s a call), and `--match <regex>` marks lines by their text. `--lines` on a folder is refused instead of matching nothing, a boundary file missing from the profile is reported once with its line count, and an Access policy row may say `partial: <lines>` when it is checked, but not as the policy says.
+
+security-gap-analysis gets rows for the build and release pipeline: `--select cicd:<level>` adds 18 controls written for this skill, one chapter per OWASP Top 10 CI/CD Security Risk (flow control, pipeline identities, dependency chain, poisoned pipeline execution, credentials, runners and caches, pinned third-party actions, artifact integrity, logging). Before, pipeline gaps lived only as prose in `gaps.md` and nothing reopened them when a workflow changed. `gap.py check --complete` now reads `gaps.md` by its headings: a missing or partial ID must stand in an entry, not only in the summary or under Not covered, and an unverifiable ID under Check outside the code. An existing `gaps.md` that named IDs only in its summary fails until they get an entry.
+
+local-dast, from the friction of the blind runs of 2026-11-18 (all four skill runs reported the first point):
+
+- `--only` no longer keeps every earlier write and every earlier case of a session; a reproduction was 36 of 37 and 43 of 44 cases. It keeps what a case names (`requires`, the new `after`, `same_as`, the cases its values come from) and the first case of each session it uses. A plan whose re-read relied on the old rule must name its write in `after`.
+- New field `after`: run once the named cases have run, whatever their result. A case that shows a flaw's impact no longer becomes `not-run` because the case that showed the flaw failed, as `requires` makes it.
+- A `Cookie` in `headers` is sent after a session's own cookies, so a planted cookie can travel with a victim's session.
+- A taken value may be up to 4,096 characters, enough for a JWT.
+- `review.md` names the header of a failed `expect_headers` or `forbid_headers`.
+- The skill text: an effect read from the disposable copy's database, outbox or log in both runs counts as `confirmed`; the Routes list comes from the framework's route table; one assessment for many runs; Boundaries mention `.git/info/exclude`; a read-only MCP tool still needs `--allow-writes`.
+
 ## 0.3.0
 
 Ships Cloudflare's security-audit skill in the bundle, unchanged from upstream commit `c1c8a8c`, under its own MIT licence. It is listed in the README under "Other security skills I use", apart from the skills written here. Install: copy `skills/security-audit` as well; its validators need Node.js.

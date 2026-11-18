@@ -29,14 +29,57 @@ What it says: on code flaws the difference is one hit, inside the noise; the bar
 
 ## Runtime testing on the arena, 2026-11-18
 
-| Setup | Runs | Flaws found | Shown by request | Decoys flagged | Minutes |
-| --- | --- | --- | --- | --- | --- |
-| No skill, dynamic test | 2 | 74 %, 67 % | 65 %, 59 % | 0, 2 | 7, 9 |
-| local-dast before the runner changes | 2 | 69 %, 71 % | 35 %, 39 % | 0, 0 | 20, 20 |
-| local-dast with forms, uploads, wider `take`, `--only` | 2 | 71 %, 71 % | 61 %, 53 % | 0, 1 | 30, 29 |
+Two series on the same day. The first ran before the runner changes and on a model that was not recorded, two runs per setup and no twin. The second ran the version in this repository at 0.3.0: three runs per setup on the original and one on the fixed twin, all eight on Opus 5.5 with the same rules, so its numbers can be compared with each other and not with the first series.
 
-What it says: the first version proved about half of what the bare model proved, because its runner could not express forms, uploads or values carried between requests. With those added it reached the same level, at three to four times the time. It does not yet beat the bare model, and two runs per setup cannot show a difference smaller than the noise. The friction notes of those runs drove the next changes: a taken value in a header and an upload field, assertions against a taken value, cookies that can be taken and replayed, `--only` keeping the writes and sign-ins a case stands on, and case shapes beyond access control. That version is the one in this repository, and it has not been measured yet. No twin run was made on this date.
+**Second series (Opus 5.5, paired against the twin).**
+
+| | No skill, dynamic test | local-dast 0.3.0 |
+| --- | --- | --- |
+| Paired recall, median (min–max) | 63 % (63–65) | 67 % (65–69) |
+| Paired recall, only findings shown by a request | 59 % (59–59) | 57 % (57–61) |
+| What "shown by a request" demanded | one request that showed it | a case that failed, and failed again in a second run from reset data |
+| Precision (lower bound), median | 90 % | 92 % |
+| Still flagged in the fixed twin | 2 flaws (4 %) | 1 flaw (2 %) |
+| Decoys flagged | 1 of 11, in one run | 1 of 11, in one run |
+| Time per run | 10–12 min | 25–27 min |
+| Tokens per run | about 255k | about 350k |
+
+What it says: the skill finds and proves about as much as the bare model, a little more in total and a little less by request, and both differences are inside the noise of three runs (about six points). What it buys is a stricter kind of proof (every request-confirmed finding was reproduced from reset data, which the bare runs never did), fewer false alarms on the fixed twin, and a written plan and report that can be replayed after a fix. It costs two and a half times the time. Neither setup found the ten vulnerable dependencies or the secret in Git history, which are local-security-review's job.
+
+One incident in the bare runs: a tester's own HTTP client followed a redirect to an identity provider's address under the reserved `.test` domain; the name lookup failed and no connection was made. The runner never follows redirects, so the skill runs cannot do this. The rules for testers now say not to follow redirects.
+
+**First series (model not recorded, two runs per setup, no twin).**
+
+| Setup | Flaws found | Shown by request | Minutes |
+| --- | --- | --- | --- |
+| No skill, dynamic test | 74 %, 67 % | 65 %, 59 % | 7, 9 |
+| local-dast before the runner changes | 69 %, 71 % | 35 %, 39 % | 20, 20 |
+| local-dast with forms, uploads, wider `take`, `--only` | 71 %, 71 % | 61 %, 53 % | 30, 29 |
+
+The first version proved about half of what the bare model proved, because its runner could not express forms, uploads or values carried between requests. The friction notes of these runs drove the changes measured in the second series.
 
 ## Gap analysis on the arena, 2026-11-18
 
 One blind run of security-gap-analysis, code reading only: 74 % of the key's flaws found (38 of 51) as missing or partial controls, plus 25 findings outside the key, which is the skill's actual job (controls that are absent rather than code that is wrong). One decoy flagged. 19 minutes. No twin run. Its friction notes (step order, inventory patterns that missed file-path sinks and model calls, `check --complete` accepting an ID anywhere in `gaps.md`, no rows for build, release and Terraform) are the next work.
+
+## Design layer of the gap analysis, 2026-11-18
+
+All runs blind, on Opus 5.5. "Before" is security-gap-analysis without the design layer; "with" adds the `design` catalog, the Security invariants table and `gap.py probe`. One run before and two with on the planted-flaw arena; one each on a public five-service practice API (about 41,000 own lines in Java, Go, Python and TypeScript, plus 129,000 vendored), judged by hand against its 18 published challenges.
+
+| | Before | With the design layer |
+| --- | --- | --- |
+| Arena: flaws of the key found | 67 % | 74 %, 69 % |
+| Arena: precision (lower bound) | 64 % | 73 %, 61 % |
+| Arena: decoys flagged | 1 of 11 | 3 and 2 of 11 |
+| Arena: critical and high flaws named by a broken or partial invariant | — | 20 and 21 of 24 |
+| Arena: controls probed by `gap.py probe` | — | 6 and 10 |
+| Practice API: challenges found | 16 of 18 | 16 of 18 |
+| Practice API: own code read line by line | 36 % (server code 71 %) | 39 % (server code nearly all) |
+| Time per run | 26 and 35 min | 30, 31 and 37 min |
+
+What it says: the design layer does not find more flaws; the bare reading already found the critical ones, and the differences are inside the noise. What it adds is structure the reading did not have. The broken invariants are the design gaps, stated as rules of the product with their place in the code (an SSO key not owned by one tenant, a protocol session that does not carry the token's identity, a share link's permission outside its signature), and on the practice API they map almost one to one onto its published challenges. It costs about five minutes a run and a few more alarms on decoys.
+
+**Do the tests test the controls?** Measured on the arena with a script that switches one correctly built control off at a time in a copy and runs the application's 180 tests: 10 of 20 controls can be removed with every test still passing, among them the sign-in requirement on views, the tenant filter on listings, the password check, the one-time-code check and all three checks on authorization codes. Where a run's probe and this measurement looked at the same line they agreed. The runs probed only their design invariants, so most of those ten were never asked about; the skill now also asks for a probe of each basic control that `met` authentication, authorization and session rows rely on. That instruction is not measured yet.
+
+**Larger codebases.** On the practice API one agent without subagents read nearly all server code and swept the user interface by pattern. What slowed it was the tooling, not the reading: `gap.py` lost 1,215 marks when two calls ran at once, and marking rescanned the whole repository at about three seconds a call. Both are fixed. Tests of services that need a database or a build download could not be probed offline.
+
