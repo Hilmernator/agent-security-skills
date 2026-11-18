@@ -95,6 +95,28 @@ class Rows(unittest.TestCase):
         code, out = run("check", str(self.repo))
         self.assertEqual(code, 1)
 
+    def test_many_rows_are_set_from_one_file_and_a_bad_row_changes_nothing(self):
+        batch = self.repo / "batch.csv"
+        with batch.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "status", "evidence", "notes"])
+            w.writerow(["asvs:V1.2.1", "met", "src/app.py:2", ""])
+            w.writerow(["asvs:V1.2.2", "missing", "", "No encoding of URLs; see src/app.py:3."])
+            w.writerow(["asvs:V2", "not-applicable", "", "No business logic beyond one route."])
+        code, out = run("set", str(self.repo), "--from", str(batch))
+        self.assertEqual(code, 0, out)
+        rows = self.rows()
+        self.assertEqual((rows[("asvs", "V1.2.1")]["status"], rows[("asvs", "V1.2.1")]["evidence"]), ("met", "src/app.py:2"))
+        self.assertEqual(rows[("asvs", "V1.2.2")]["status"], "missing")
+        self.assertTrue(all(r["status"] == "not-applicable" for k, r in rows.items() if k[1].startswith("V2.")))
+        with batch.open("a", newline="") as f:
+            csv.writer(f).writerow(["asvs:V1.3.1", "met", "", ""])  # met without evidence: the whole file is refused
+        before = (self.repo / "security/requirements.csv").read_text()
+        code, out = run("set", str(self.repo), "--from", str(batch))
+        self.assertEqual(code, 1)
+        self.assertIn("line 5: asvs:V1.3.1: met needs evidence", out)
+        self.assertEqual((self.repo / "security/requirements.csv").read_text(), before)
+
     def test_statuses_need_their_reasons(self):
         self.assertEqual(run("set", str(self.repo), "asvs:V1.2.1", "--status", "met")[0], 1)
         self.assertEqual(run("set", str(self.repo), "asvs:V1.2.1", "--status", "missing")[0], 1)

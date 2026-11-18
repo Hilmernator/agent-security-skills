@@ -195,7 +195,7 @@ Evidence rules:
 python3 <skill-dir>/scripts/gap.py set <repo> asvs:V6.3.1 --status missing --notes "No attempt limit on POST /login (src/auth.rs:40)."
 ```
 
-`set` takes a chapter (`asvs:V6`), a section (`asvs:V6.5`) or one requirement, so a section the product has nothing of (no MFA, no XML) is one call with its reason. A requirement that is met by something being absent (no `eval`, no password hints) is `met` with the line that shows what is used in its place, or `not-applicable` when the product has no such feature at all.
+To set many rows at once, write them to a CSV with the header `id,status,evidence,notes` (one line per requirement, section or chapter) and run `gap.py set <repo> --from <file>`; every line is checked first, and one bad line writes nothing. `set` takes a chapter (`asvs:V6`), a section (`asvs:V6.5`) or one requirement, so a section the product has nothing of (no MFA, no XML) is one call with its reason. A requirement that is met by something being absent (no `eval`, no password hints) is `met` with the line that shows what is used in its place, or `not-applicable` when the product has no such feature at all.
 
 Then assess each security invariant the same way: read every line in its `Enforced at`, look for a path to the same data or action that passes none of them, and set `Status`. A `design` row and an invariant often answer each other: cite the invariant ID in the row's notes.
 

@@ -3,6 +3,7 @@
   gap.py init      REPO --select asvs:2 [--select aisvs:2] [--select masvs]
   gap.py show      REPO [PREFIX ...] [--status S]
   gap.py set       REPO PREFIX ... --status S [--evidence "path:line; path:line-line"] [--notes TEXT]
+  gap.py set       REPO --from rows.csv   (header id,status,evidence,notes; all lines checked before any is written)
   gap.py files     REPO [--list STATUS] [--mark PATH ... --status S [--notes TEXT]]
   gap.py inventory REPO [--list STATUS] [--mark --kind K --path P --lines A-B --status S [--notes TEXT]]
   gap.py check     REPO [--complete]
@@ -204,7 +205,41 @@ def show(args):
                     print(f"  {k}: {r[k]}")
 
 
+def set_from(args):
+    """Many rows from one CSV (id,status,evidence,notes). Every line is checked before anything is written, so a bad line changes nothing."""
+    rows, cats, accepted, rev = load(args.repo), catalogs(), accepted_ids(args.repo), revision(args.repo)
+    with open(args.from_file, newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames or not {"id", "status"} <= set(reader.fieldnames) <= {"id", "status", "evidence", "notes"}:
+            sys.exit("--from needs a CSV with the header id,status and optionally evidence,notes")
+        lines = list(reader)
+    errors, changed = [], set()
+    for n, line in enumerate(lines, 2):
+        hit = [r for r in rows if matches(line["id"] or "", r)]
+        if line["status"] not in STATUSES or not hit:
+            errors.append(f"line {n}: {line['id']}: " + ("matches no row" if not hit else f'status "{line["status"]}" is not one of {", ".join(STATUSES)}'))
+            continue
+        for r in hit:
+            r.update(status=line["status"], evidence=line.get("evidence") or "", notes=line.get("notes") or "", assessed=rev)
+            errors += [f"line {n}: {e}" for e in problems(Path(args.repo), r, cats, accepted)]
+            changed.add(id(r))
+    for e in errors:
+        print("problem: " + e)
+    if errors:
+        print("nothing was written")
+        return 1
+    save(args.repo, rows)
+    print(f"{len(changed)} rows set from {len(lines)} lines")
+    return 0
+
+
 def set_(args):
+    if args.from_file:
+        if args.prefix or args.status:
+            sys.exit("--from takes the ids and statuses from the file; give no prefix or --status")
+        return set_from(args)
+    if not args.prefix or not args.status:
+        sys.exit("set needs a prefix and --status, or --from FILE")
     rows = load(args.repo)
     hit = [r for r in rows if any(matches(p, r) for p in args.prefix)]
     if not hit:
@@ -748,10 +783,11 @@ def main(argv=None):
     p.add_argument("--status", action="append", choices=STATUSES)
     p = sub.add_parser("set")
     p.add_argument("repo")
-    p.add_argument("prefix", nargs="+")
-    p.add_argument("--status", required=True, choices=STATUSES)
+    p.add_argument("prefix", nargs="*")
+    p.add_argument("--status", choices=STATUSES)
     p.add_argument("--evidence")
     p.add_argument("--notes")
+    p.add_argument("--from", dest="from_file", metavar="CSV", help="set many rows: a CSV with the header id,status,evidence,notes")
     p = sub.add_parser("files")
     p.add_argument("repo")
     p.add_argument("--list", choices=FILE_STATUSES + ["changed"])
