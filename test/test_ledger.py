@@ -153,6 +153,25 @@ class Ledger(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.dast(bad)
 
+    def test_cases_of_one_root_cause_are_one_row_at_their_place_in_the_code(self):
+        report = {"cases": [{"id": "peer-writes", "state": "assertion-failed"}, {"id": "owner-rereads", "state": "assertion-failed"},
+                            {"id": "peer-lists", "state": "assertion-failed"}], "zap": {"status": "complete"}, "findings": []}
+        (self.out / "report.json").write_text(json.dumps(report))
+        same = {"finding": "comment-edit-without-ownership", "path": "app.py"}
+        verdicts = [{"id": "peer-writes", "disposition": "confirmed", "basis": "test", "note": "A peer changed the owner's comment.", **same},
+                    {"id": "owner-rereads", "disposition": "confirmed", "basis": "test", "note": "The owner's re-read shows the change.", **same},
+                    {"id": "peer-lists", "disposition": "likely", "basis": "code", "note": "The list has no tenant filter."}]
+        (self.out / "assessments.json").write_text(json.dumps(verdicts))
+        out = run("record", self.repo, self.out / "report.json", "--assessments", self.out / "assessments.json")[1]
+        self.assertIn("2 new", out)  # two rows: one finding for two cases, and one case
+        self.assertEqual(sorted((r["rule"], r["path"], r["status"]) for r in self.rows()),
+                         [("case:peer-lists", "", "likely"), ("finding:comment-edit-without-ownership", "app.py", "confirmed")])
+        for bad in ({**verdicts[1], "disposition": "likely", "basis": "code"},  # one root cause, two verdicts
+                    {**verdicts[1], "path": "../outside.py"}, {**verdicts[1], "path": "missing.py"}, {**verdicts[1], "finding": "Has Spaces"}):
+            (self.out / "assessments.json").write_text(json.dumps([verdicts[0], bad, verdicts[2]]))
+            with self.subTest(bad=bad), self.assertRaises(SystemExit):
+                run("record", self.repo, self.out / "report.json", "--assessments", self.out / "assessments.json")
+
     def test_the_ledger_is_ignored_by_git_unless_it_is_tracked(self):
         def git(*args):
             return subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True)

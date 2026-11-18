@@ -22,6 +22,7 @@ local-dast, from the friction of the blind runs of 2026-11-18 (all four skill ru
 - A `Cookie` in `headers` is sent after a session's own cookies, so a planted cookie can travel with a victim's session.
 - A taken value may be up to 4,096 characters, enough for a JWT.
 - `review.md` names the header of a failed `expect_headers` or `forbid_headers`.
+- The findings ledger: an assessment may name a failed case's root cause (`finding`) and its file (`path`). Cases with one root cause become one row at that file instead of one row per case without a place; two runs reported 58 rows for 34 findings. A row that gets a path gets a new fingerprint.
 - The skill text: an effect read from the disposable copy's database, outbox or log in both runs counts as `confirmed`; the Routes list comes from the framework's route table; one assessment for many runs; Boundaries mention `.git/info/exclude`; a read-only MCP tool still needs `--allow-writes`.
 
 ## 0.3.0

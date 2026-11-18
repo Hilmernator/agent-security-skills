@@ -16,6 +16,7 @@ import csv
 import datetime
 import hashlib
 import json
+import re
 import os
 import subprocess
 import sys
@@ -121,8 +122,11 @@ def review_items(repo, doc):
     return items
 
 
-def dast_items(doc, assessments):
-    """Candidates of local-dast: ZAP alerts and failed cases, keyed by rule and case labels only."""
+def dast_items(doc, assessments, repo=None):
+    """Candidates of local-dast: ZAP alerts and failed cases, keyed by rule and case labels, or by a root cause the agent names.
+
+    An assessment may add `finding` (a short label of the root cause) and `path` (the repository file where it is). Cases with one
+    finding become one row at that path: a write and the re-read that judges it are one defect, not two."""
     # A ZAP row is its rule. The cases an alert names are a sample that differs between runs of one plan, so they are not part of the key.
     items = {f["id"]: {"id": f["id"], "key": ("zap", f"zap:{f['alert_ref']}", "", "")} for f in doc["findings"]}
     items.update({c["id"]: {"id": c["id"], "key": ("case", f"case:{c['id']}", "", "")}
@@ -139,7 +143,21 @@ def dast_items(doc, assessments):
         if a.get("disposition") not in STATUSES or a.get("basis") not in BASES[:3] or not str(a.get("note") or "").strip():
             sys.exit(f"{a['id']}: needs a disposition in {STATUSES}, a basis in {BASES[:3]} and a note")
         items[a["id"]].update(status=a["disposition"], basis=a["basis"], note=a["note"])
-    return list(items.values())
+        if "finding" in a or "path" in a:
+            label, where = a.get("finding"), a.get("path", "")
+            if label is not None and not (isinstance(label, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", label)):
+                sys.exit(f"{a['id']}: finding must be a short lowercase label of letters, digits and hyphens")
+            if where and (not isinstance(where, str) or repo is None or not (repo / where).resolve().is_relative_to(repo)
+                          or not (repo / where).is_file()):
+                sys.exit(f"{a['id']}: path must be a file of the repository, relative to its root")
+            kind, rule = ("finding", f"finding:{label}") if label else items[a["id"]]["key"][:2]
+            items[a["id"]]["key"] = (kind, rule, where, "")
+    merged = {}
+    for item in items.values():
+        first = merged.setdefault(item["key"], item) if item["key"][0] == "finding" else None
+        if first is not None and first is not item and (first["status"], first["basis"]) != (item["status"], item["basis"]):
+            sys.exit(f"{item['key'][1]}: {first['id']} and {item['id']} give one root cause two verdicts")
+    return [i for i in items.values() if i["key"][0] != "finding"] + list(merged.values())
 
 
 def record(args):
@@ -162,7 +180,7 @@ def record(args):
         # ponytail: local-dast rows are never pruned, because a run sends only the cases of its plan.
         # Ceiling: a row outlives a case that was removed. Way up: a `drop <fingerprint>` command.
         skill, full = "local-dast", False
-        items = dast_items(doc, json.loads(Path(args.assessments).read_text()))
+        items = dast_items(doc, json.loads(Path(args.assessments).read_text()), repo)
     else:
         sys.exit(f"{args.file} is neither a review.json of render_review.py nor a report.json of dast.py")
 
