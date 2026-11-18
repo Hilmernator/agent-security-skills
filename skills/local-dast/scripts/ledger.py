@@ -4,8 +4,7 @@
 One row per finding and skill, updated in place; no other file is written. Run `record` last, when every
 candidate has its disposition. It says which findings are new, which were seen before and which changed,
 then stores this run's rows. A finding that is still unreviewed gets no label and no row, so an earlier
-verdict never stands in for a missing one. local-dast bundles it; a scanner-backed review skill that reports
-review.json can bundle the same file and keep its own rows.
+verdict never stands in for a missing one. local-security-review and local-dast bundle the same file.
 
   ledger.py record <repo> <review.json>                        output of render_review.py
   ledger.py record <repo> <report.json> --assessments <file>   output of dast.py and the agent's verdicts

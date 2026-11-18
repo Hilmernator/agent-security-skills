@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 SKILLS = Path(__file__).resolve().parents[1] / "skills"
-sys.path.insert(0, str(SKILLS / "local-dast/scripts"))
+sys.path.insert(0, str(SKILLS / "local-security-review/scripts"))
 sys.path.insert(0, str(SKILLS / "security-gap-analysis/scripts"))
 import gap
 import ledger
@@ -168,7 +168,8 @@ class Ledger(unittest.TestCase):
 
 
 class Package(unittest.TestCase):
-    def test_gap_knows_the_ledger_header(self):
+    def test_both_skills_bundle_the_same_ledger_and_gap_knows_its_header(self):
+        self.assertEqual((SKILLS / "local-security-review/scripts/ledger.py").read_bytes(), (SKILLS / "local-dast/scripts/ledger.py").read_bytes())
         self.assertEqual(gap.FINDING_FIELDS, ledger.FIELDS)
 
 

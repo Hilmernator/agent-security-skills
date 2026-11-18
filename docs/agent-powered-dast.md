@@ -22,10 +22,9 @@ findings, reachable routes, identities, observed behavior, and a reproducible te
 Scanner orchestration alone does not establish authorization or business-logic
 correctness. Application-specific expectations remain necessary.
 
-## Fit with this collection
+## Fit with this repository
 
-The inspected working tree was clean at `bfca739`. The current workflow already
-provides SAST, SCA, secrets, context mapping, candidate investigation, agent hunting,
+local-security-review already provides SAST, SCA, secrets, context mapping, candidate investigation, agent hunting,
 and a fix plan. Preserve those stages and their scanner safety, integrity,
 redaction, and licensing boundaries.
 
@@ -246,9 +245,6 @@ Run the [README verification commands](../README.md#verification) after package
 implementation, plus the new runtime integration checks. Unit tests alone cannot
 establish real scanner coverage or isolation.
 
-For open-source distribution, preserve the existing [source notices](../SOURCES.md).
-That file records security and bug-review source with no upstream repository
-license found. Resolve those permissions or independently replace the affected
-source before describing the entire collection as freely redistributable. New
-runtime modules can be original code with an explicit license. Do not copy scanner
+Record every outside source in [SOURCES.md](../SOURCES.md). New runtime modules are
+original code under the repository's licence. Do not copy scanner
 binaries, downloaded templates, databases, credentials, or run reports into Git.

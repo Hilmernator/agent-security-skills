@@ -11,6 +11,22 @@ How the skills are measured, and what the measurements showed. A number here was
 
 One run varies too much to say much: with 51 flaws, the standard error is about six percentage points before runs differ at all. Three runs per setup and one on the fixed twin is the target; the rows below say when fewer were made.
 
+## Code review on the arena, 2026-11-16
+
+Three blind runs per setup on the original and one on the fixed twin, the same model (Opus 5.5), scored against answer key v3. The twins were built before 14 of the key's entries existed, so those entries do not count in the twin on this date.
+
+| | No skill | local-security-review |
+| --- | --- | --- |
+| Paired recall, median (min–max) | 74 % (72–74) | 84 % (78–94) |
+| Code flaws, levels 2–5, median | 37 of 41 | 38 of 41 |
+| Vulnerable dependencies (10) | 1–2 | 2–10 |
+| Precision (lower bound) | 95 % | 94–96 % |
+| Decoys flagged | 0 % | 0 % |
+| Union over three runs | 80 % | 96 % |
+| Time per run | 5–6 min | 13–16 min |
+
+What it says: on code flaws the difference is one hit, inside the noise; the bare model already finds almost every flaw at levels 2 to 5. The skill's lead comes from dependencies and from steadier results. One run dismissed most advisories as unreachable, which is why the low end is 2 of 10. The skill missed a secret that exists only in Git history in all three runs, while the bare model found it each time with `git log`; full scans read local history since, and that change has not been measured.
+
 ## Runtime testing on the arena, 2026-11-18
 
 | Setup | Runs | Flaws found | Shown by request | Decoys flagged | Minutes |

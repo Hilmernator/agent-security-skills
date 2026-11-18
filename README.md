@@ -4,6 +4,7 @@ Security skills for coding agents (Claude Code, Codex) that leave evidence behin
 
 | Skill | The question it answers | It leaves behind |
 | --- | --- | --- |
+| [local-security-review](skills/local-security-review/SKILL.md) | Which known defect patterns, leaked secrets, vulnerable dependencies and misconfigured infrastructure are in this code, and which of them matter? | A fix plan in three tiers (`confirmed`, `judged`, `scanner`) and its rows in `security/findings.csv` |
 | [security-gap-analysis](skills/security-gap-analysis/SKILL.md) | Which security controls should this code have, and does not? | The repository's `security/` folder: a product profile, a ledger of every file read, an inventory of every way in, and a status with `file:line` evidence for each requirement |
 | [local-dast](skills/local-dast/SKILL.md) | What does the running application actually do when one user asks for, or changes, another's data? | A fix plan and a private report of every request sent and every assertion checked; its rows in `security/findings.csv` |
 | [Security gate](#security-gate) | Can the agent quietly weaken the checks that judge it? | Nothing; it asks a person first |
@@ -15,6 +16,12 @@ Security skills for coding agents (Claude Code, Codex) that leave evidence behin
 - **Measured before kept.** Changes are driven by blind runs against a test application with an answer key, compared with the same model without the skill. See [evaluation](docs/evaluation.md), including where the skills do not yet beat the bare model.
 - **Small, bounded tools.** The runner sends only the requests its plan lists, to 127.0.0.1 or to one pre-production host named on the command line, with a request budget, a time limit and no redirects followed. Python standard library only.
 - **Test first.** Every behaviour of the scripts has a test that failed before the code was written.
+
+## local-security-review
+
+Use it to scan and review a repository, a diff, a commit or a release. The agent prepares the scanners with one command (`security.py --setup`): Semgrep, Bandit, ESLint, Trivy for infrastructure as code, bundled Rust rules, OSV advisories for npm, PyPI and crates.io, and Gitleaks for secrets in files and in local Git history. It then maps the target, investigates every finding for reachability and impact, hunts for what scanners miss, and returns a fix plan. A finding is `confirmed` only when `prove.py` ran a proof test twice in a temporary copy and both runs failed on the current code; `render_review.py` refuses `confirmed` without that run. Say "fix it" afterwards to apply the plan; the proof tests stay as regression tests.
+
+The default scope is the full repository. `diff`, `commit [SHA]` and `release` narrow or widen it. It needs Python 3.10+, and Node for ESLint; setup supports macOS and Linux. Scanner binaries, rule packs and advisory databases are downloaded at setup, checked against pinned hashes, and never committed; read [the licensing boundaries](skills/local-security-review/references/licensing.md) first.
 
 ## security-gap-analysis
 
@@ -40,9 +47,9 @@ Any error in the gate lets the tool run. `AGENT_TOOLS_SECURITY_GATE=off` turns i
 
 ## How the skills share work
 
-Each skill makes its own findings first. They share two things only: before the work, the facts in `security/profile.md` and the inventory (what the product is, not anyone's verdict); after the work, the findings ledger `security/findings.csv`, which a skill opens only when it delivers, to say whether a finding is new, seen before, changed, or decided by you. A label never changes a verdict. The `security/` folder holds a fixed set of files and is kept out of commits through `.git/info/exclude` unless you track it yourself.
+Each skill makes its own findings first. They share two things only: before the work, the facts in `security/profile.md` and the inventory (what the product is, not anyone's verdict); after the work, the findings ledger `security/findings.csv`, which a skill opens only when it delivers, to say whether a finding is new, seen before, changed, or decided by you. local-security-review and local-dast write it; security-gap-analysis only checks its header. A label never changes a verdict. The `security/` folder holds a fixed set of files and is kept out of commits through `.git/info/exclude` unless you track it yourself.
 
-Not covered here: crawling, browser journeys and active scanning, scanner-based SAST, dependency and secret scanning, cloud configuration that is not reachable over HTTP, and standards that are not bundled (CIS, PCI DSS, ISO 27001, SOC 2).
+Not covered here: crawling, browser journeys and active scanning of a running application, container images, dependencies outside npm, PyPI and crates.io, cloud configuration that is not reachable over HTTP, and standards that are not bundled (CIS, PCI DSS, ISO 27001, SOC 2).
 
 ## Install
 
@@ -55,8 +62,8 @@ python3 scripts/validate_package.py
 python3 -m unittest discover -s test -v
 ```
 
-Tests that need ZAP, Java or `openssl` skip themselves when the tool is missing and say so.
+Tests that need ZAP, Java, `openssl`, a scanner binary or the network skip themselves when it is missing and say so.
 
 ## Sources and licence
 
-The code is MIT-licensed ([LICENSE](LICENSE)). The bundled OWASP catalogs are CC BY-SA 4.0; see [SOURCES.md](SOURCES.md).
+The code is MIT-licensed ([LICENSE](LICENSE)). The bundled OWASP catalogs are CC BY-SA 4.0, and the scanners keep their own licences; see [SOURCES.md](SOURCES.md).

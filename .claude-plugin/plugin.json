@@ -1,7 +1,7 @@
 {
   "name": "agent-security-skills",
-  "version": "0.1.0",
-  "description": "Security skills for coding agents: a gap analysis against OWASP ASVS, AISVS and MASVS with file:line evidence, a bounded runtime test (DAST) of a disposable local copy, and hooks that stop an agent from weakening its own checks.",
+  "version": "0.2.0",
+  "description": "Security skills for coding agents: a scanner-backed code review with proof tests, a gap analysis against OWASP ASVS, AISVS and MASVS with file:line evidence, a bounded runtime test (DAST) of a disposable local copy, and hooks that stop an agent from weakening its own checks.",
   "author": {
     "name": "Rasmus Hilmersson"
   }

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS = {"local-dast", "security-gap-analysis"}
+SKILLS = {"local-dast", "local-security-review", "security-gap-analysis"}
 
 
 def problems(root):
@@ -33,6 +33,9 @@ def problems(root):
             local = target.split("#")[0]
             if local and not re.match(r"[a-z][a-z0-9+.-]*:", local) and not (path.parent / local).exists():
                 found.append(f"{path.relative_to(root)}: broken link {target}")
+    first = (root / "skills/local-dast/scripts/ledger.py").read_bytes()
+    if first != (root / "skills/local-security-review/scripts/ledger.py").read_bytes():
+        found.append("ledger.py differs between local-dast and local-security-review")
     for groups in json.loads((root / "hooks/hooks.json").read_text())["hooks"].values():
         for hook in (hook for group in groups for hook in group["hooks"]):
             found += [f"hooks.json: missing {script}" for script in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\"\s]+)", hook["command"]) if not (root / script).is_file()]
