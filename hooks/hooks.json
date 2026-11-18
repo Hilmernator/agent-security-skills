@@ -1,0 +1,22 @@
+{
+  "description": "Security gate: a person approves edits that weaken checks, installs of packages the registry does not know are refused, and a session that edited a file with a confirmed finding is asked to recheck it. AGENT_TOOLS_SECURITY_GATE=off turns it off.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/security_gate.py\"", "timeout": 20}]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/security_gate.py\"", "timeout": 10}]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/security_gate.py\"", "timeout": 10}]
+      }
+    ]
+  }
+}

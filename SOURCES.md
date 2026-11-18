@@ -1,0 +1,11 @@
+# Sources
+
+| Component | Source | Licence |
+| --- | --- | --- |
+| local-dast | Written for this repository: HTTP runner, ZAP adapter, findings ledger and tests. The token and MCP cases follow the MCP authorization specification and its security best practices (version 2025-11-25); no text copied. Tested on loopback against VAmPI (erev0s/VAmPI at f16052d) and a test server on the MCP Python SDK 2.3.0, neither bundled. | MIT |
+| security-gap-analysis | Written for this repository: workflow and `gap.py`. Catalogs from [OWASP/ASVS](https://github.com/OWASP/ASVS) v5.0.0 `5cf9b032440be53ce345ab3c130fda46ba1ce7a2`, [OWASP/AISVS](https://github.com/OWASP/AISVS) v1.01 `3ae3af45c363467b8ad823ef79219236e67ca22f` and [OWASP/masvs](https://github.com/OWASP/masvs) v2.1.0 `1de2913fe799137ac4695eabaae633da693070cd`, captured 2026-11-04 | Code: MIT. Catalogs: CC BY-SA 4.0, requirement text unchanged, reformatted to JSON; see the [notice](skills/security-gap-analysis/catalogs/NOTICE.md) |
+| Security gate | Written for this repository | MIT |
+
+## ZAP
+
+local-dast uses the separately downloaded [ZAP 2.17.0 cross-platform archive](https://github.com/zaproxy/zaproxy/releases/tag/v2.17.0), SHA-256 `94c8f767b1c2e94f0db66b3ae56514d5e3f5a728ee1b6c798e0c8fe2d61fbff0`, pinned from upstream release metadata on 2026-10-22. No archive, upstream source, rules or scan output is bundled, and the runner itself uses only Python's standard library. This is not a redistribution clearance for ZAP or its dependencies; see [the setup reference](skills/local-dast/references/setup.md).
