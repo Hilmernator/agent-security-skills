@@ -2,6 +2,10 @@
 
 What changed in each version, newest first, and what an existing installation must do about it.
 
+## 0.3.0
+
+Ships Cloudflare's security-audit skill in the bundle, unchanged from upstream commit `c1c8a8c`, under its own MIT licence. It is listed in the README under "Other security skills I use", apart from the skills written here. Install: copy `skills/security-audit` as well; its validators need Node.js.
+
 ## 0.2.0
 
 Adds local-security-review: a scanner-backed review of a repository (SAST, SCA, secrets in files and local Git history), with investigation of every finding, a hunt for what scanners miss, a fix plan in three evidence tiers, and proof tests run twice before a finding counts as `confirmed`. It writes the same findings ledger as local-dast, so `ledger.py` is shared between the two and kept identical by a test. The security gate's last check now applies to its findings too.

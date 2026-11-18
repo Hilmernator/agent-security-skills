@@ -9,6 +9,8 @@ Security skills for coding agents (Claude Code, Codex) that leave evidence behin
 | [local-dast](skills/local-dast/SKILL.md) | What does the running application actually do when one user asks for, or changes, another's data? | A fix plan and a private report of every request sent and every assertion checked; its rows in `security/findings.csv` |
 | [Security gate](#security-gate) | Can the agent quietly weaken the checks that judge it? | Nothing; it asks a person first |
 
+Also in the bundle, written by others: [Other security skills I use](#other-security-skills-i-use).
+
 ## How I build these
 
 - **Evidence over claims.** A finding is `confirmed` only when a test or a request showed it twice, from reset state. What rests on reading code is `judged`, and says so. A model rereading its own finding is not verification.
@@ -45,6 +47,14 @@ Coding agents tend to weaken the checks they can see and to install packages tha
 
 Any error in the gate lets the tool run. `AGENT_TOOLS_SECURITY_GATE=off` turns it off.
 
+## Other security skills I use
+
+Skills by other people that I run beside my own and ship in this bundle, unchanged, so that one install gives the whole toolset. They keep their authors' licences.
+
+| Skill | Author | What I use it for | Licence |
+| --- | --- | --- | --- |
+| [security-audit](skills/security-audit/SKILL.md) | [Cloudflare](https://github.com/cloudflare/security-audit-skill), at `c1c8a8c` | A source-first audit without scanners: reconnaissance, coverage-led hunting, independent validation and a structured report with a coverage ledger. A second, independent reading after local-security-review, when it is worth its cost. | [MIT](skills/security-audit/LICENSE) |
+
 ## How the skills share work
 
 Each skill makes its own findings first. They share two things only: before the work, the facts in `security/profile.md` and the inventory (what the product is, not anyone's verdict); after the work, the findings ledger `security/findings.csv`, which a skill opens only when it delivers, to say whether a finding is new, seen before, changed, or decided by you. local-security-review and local-dast write it; security-gap-analysis only checks its header. A label never changes a verdict. The `security/` folder holds a fixed set of files and is kept out of commits through `.git/info/exclude` unless you track it yourself.
@@ -60,6 +70,7 @@ Copy the skill folders you want into your agent's skill directory (`~/.claude/sk
 ```sh
 python3 scripts/validate_package.py
 python3 -m unittest discover -s test -v
+node --test skills/security-audit/*.test.cjs
 ```
 
 Tests that need ZAP, Java, `openssl`, a scanner binary or the network skip themselves when it is missing and say so.
