@@ -10,6 +10,7 @@
   gap.py controls  REPO
   gap.py probe     REPO INVARIANT --copy DIR --file PATH --old TEXT --new TEXT -- COMMAND ...
   gap.py probe     REPO --batch probes.csv --copy DIR -- COMMAND ...   (header id,file,old,new; one baseline)
+  gap.py report    REPO [--out FILE]   (one HTML page of the whole analysis, written outside security/)
 
 A PREFIX is standard:id-prefix, for example asvs:V6, asvs:V6.2.1, aisvs:9, aisvs-ac:AC.4, masvs:MASVS-STORAGE.
 A PATH is a file or a directory; "." is the whole repository.
@@ -844,6 +845,20 @@ def check(args):
     return 1 if errors else 0
 
 
+def report(args):
+    """The security folder as one HTML page, for people. A view, not state: it goes outside security/ and can be made again."""
+    import tempfile
+
+    import report as page
+    repo = Path(args.repo)
+    out = Path(args.out) if args.out else Path(tempfile.gettempdir()) / f"security-gap-analysis-{repo.resolve().name}.html"
+    if out.resolve().is_relative_to((repo / "security").resolve()):
+        sys.exit("The report is a view of security/, not one of its files: write it elsewhere")
+    page.write(repo, out)
+    print(f"wrote {out.resolve()}")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -892,6 +907,9 @@ def main(argv=None):
     p.add_argument("--new", help="what replaces it, so that the control no longer acts")
     p.add_argument("--batch", metavar="CSV", help="many probes, one baseline: a CSV with the header id,file,old,new")
     p.add_argument("--timeout", type=int, default=600)
+    p = sub.add_parser("report", help="write the whole analysis as one self-contained HTML page, outside security/")
+    p.add_argument("repo")
+    p.add_argument("--out", help="the HTML file to write; default: the temporary folder, one file per repository")
     argv = sys.argv[1:] if argv is None else list(argv)
     split = argv.index("--") if argv[:1] == ["probe"] and "--" in argv else len(argv)
     args = ap.parse_args(argv[:split])
@@ -924,7 +942,7 @@ def locked(repo, create):
 
 def run_command(args):
     code = {"init": init, "show": show, "set": set_, "files": files, "inventory": inventory,
-            "check": check, "probe": probe, "controls": controls}[args.cmd](args) or 0
+            "check": check, "probe": probe, "controls": controls, "report": report}[args.cmd](args) or 0
     if args.cmd in ("init", "files", "inventory"):
         ensure_ignored(args.repo, "security/")
     return code

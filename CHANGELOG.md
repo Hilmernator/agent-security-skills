@@ -2,6 +2,10 @@
 
 What changed in each version, newest first, and what an existing installation must do about it.
 
+## Unreleased
+
+security-gap-analysis: `gap.py report <repo> [--out FILE]` writes the whole analysis as one HTML page for people, made from the seven files of `security/` and the bundled catalogs. It opens with the result of `check --complete` and the totals, then the gaps by risk as `gaps.md` states them (with every requirement, invariant and policy ID linked to its row), every requirement with its status, its text, the assessor's note and the lines that enforce it (filtered to the controls in place, searchable), the chapters as bars of what applies, the security invariants with their strength and whether a test noticed the probe, the Access policy with the rows that have no check, and the coverage of files and signal lines. The page is self-contained (a Content-Security-Policy that allows nothing from elsewhere), escapes every text that comes from the repository, follows the system's light or dark theme, and keeps a table view beside each chart. It is a view, not state: it goes to the temporary folder by default and never into `security/`, which keeps its seven files. Nothing to install.
+
 ## 0.4.0
 
 security-gap-analysis gets a design layer. Requirements ask whether a named control exists; products usually fail in how controls compose, and in a blind run on a planted-flaw application of 2026-11-18 rows were correctly `met` inside functions whose design was broken (cross-tenant signing keys, a protocol session that replaced the token's identity, consent remembered by name). Three additions, all in the existing files:

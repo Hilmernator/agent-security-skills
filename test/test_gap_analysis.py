@@ -4,6 +4,7 @@ import shutil
 import csv
 import io
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -520,6 +521,147 @@ class Design(unittest.TestCase):
                                                 "--old", "    if user != 'owner':", "--new", "    if False:", *command)[1])
         self.assertIn("no row I9", run("probe", str(self.repo), "I9", "--copy", str(copy), "--file", "src/app.py",
                                        "--old", "    if user != 'owner':", "--new", "    if False:", *command)[1])
+
+
+POLICY = """
+## Access policy
+
+Status: PROPOSED
+
+| ID | Route | Resource | Action | anonymous | member | Enforced at |
+| --- | --- | --- | --- | --- | --- | --- |
+| P1 | GET /records/{id} | record | read | deny | allow if owner | src/app.py:2-3 |
+| P2 | DELETE /records/{id} | record | delete | deny | allow if owner | no check found |
+"""
+
+GAPS = """# Gaps
+
+Summary above the entries.
+
+## 1. Records can be deleted by anyone signed in: high
+
+- design:A3.1 is missing. <img src=x onerror=alert(1)>
+- I3 is broken.
+
+## 2. No limit on attempts: low
+
+Risk: low. The fix is in `src/app.py`.
+
+## Check outside the code
+
+- Hosting: TLS.
+
+## Not covered
+
+Dependencies.
+"""
+
+
+class Report(unittest.TestCase):
+    """gap.py report: one self-contained HTML page made from the security folder, written outside it."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        (self.repo / "src").mkdir()
+        (self.repo / "src/__init__.py").write_text("")
+        (self.repo / "src/app.py").write_text(APP)
+        run("init", str(self.repo), "--select", "design:1")
+        run("files", str(self.repo), "--mark", ".", "--status", "read")
+        run("inventory", str(self.repo))
+        rows = Path(tempfile.mkdtemp()) / "rows.csv"
+        with rows.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "status", "evidence", "notes"])
+            w.writerow(["design", "not-applicable", "", "Fixture."])
+            w.writerow(["design:A3.1", "missing", "", "No owner check on delete. <script>alert(1)</script>"])
+            w.writerow(["design:A2.1", "met", "src/app.py:2-3", "Owner check."])
+        self.assertEqual(run("set", str(self.repo), "--from", str(rows))[0], 0)
+        (self.repo / "security/profile.md").write_text("# Profile\n\n## Product\n\nA fixture.\n" + POLICY + INVARIANTS.replace(
+            "| not probed: no tests yet | holds |\n| I2",
+            "| no test fails without src/app.py:7 (2026-11-23): python -m unittest | holds |\n| I2"))
+        (self.repo / "security/gaps.md").write_text(GAPS)
+        self.out = Path(tempfile.mkdtemp()) / "report.html"
+
+    def report(self):
+        before = sorted(p.name for p in (self.repo / "security").iterdir())
+        code, out = run("report", str(self.repo), "--out", str(self.out))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(p.name for p in (self.repo / "security").iterdir()), before)  # nothing new in security/
+        return self.out.read_text()
+
+    def data(self, html):
+        m = re.search(r'<script type="application/json" id="report-data">(.*?)</script>', html, re.S)
+        return json.loads(m[1])
+
+    def test_one_page_that_loads_nothing_from_elsewhere(self):
+        html = self.report()
+        self.assertIn('http-equiv="Content-Security-Policy"', html)
+        self.assertIn("default-src 'none'", html)
+        self.assertNotRegex(html, r'(src|href)\s*=\s*"(https?:)?//')
+        self.assertNotRegex(html, r"<link\b|<script[^>]*\bsrc=")
+
+    def test_text_from_the_repository_is_escaped(self):
+        html = self.report()
+        self.assertNotIn("<script>alert(1)", html)
+        self.assertNotIn("<img src=x", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+        self.assertNotIn("</script><", self.data_block(html))
+
+    def data_block(self, html):
+        return re.search(r'id="report-data">(.*?)</script>', html, re.S)[1]
+
+    def test_totals_match_the_requirements(self):
+        data = self.data(self.report())
+        with (self.repo / "security/requirements.csv").open() as f:
+            rows = list(csv.DictReader(f))
+        for status in ("met", "missing", "not-applicable"):
+            self.assertEqual(data["totals"][status], sum(r["status"] == status for r in rows), status)
+        self.assertEqual(sum(data["totals"].values()), len(rows))
+
+    def test_applied_controls_show_their_evidence_and_the_requirement_text(self):
+        html = self.report()
+        row = re.search(r'<tr[^>]*id="req-design-A2\.1".*?</tr>', html, re.S)[0]
+        self.assertIn('data-status="met"', row)
+        self.assertIn("src/app.py:2-3", row)
+        text = json.loads((SKILL / "catalogs/design.json").read_text())
+        wording = next(r["text"] for r in text["requirements"] if r["id"] == "A2.1")
+        self.assertIn(wording[:40].replace("&", "&amp;").replace("<", "&lt;"), row)
+
+    def test_invariants_and_controls_no_test_notices(self):
+        data = self.data(self.report())
+        self.assertEqual(data["invariants"], {"holds": 2, "partial": 0, "broken": 1, "unverifiable": 0})
+        self.assertEqual(data["probes"], {"noticed": 0, "unnoticed": 1, "not probed": 2})
+
+    def test_gaps_are_ranked_by_risk_and_link_their_ids(self):
+        html = self.report()
+        data = self.data(html)
+        self.assertEqual(data["gaps"], {"high": 1, "medium": 0, "low": 1, "unrated": 0})
+        self.assertIn('href="#req-design-A3.1"', html)
+        self.assertIn('href="#inv-I3"', html)
+
+    def test_the_access_policy_marks_rows_without_a_check(self):
+        html = self.report()
+        row = re.search(r'<tr[^>]*id="policy-P2".*?</tr>', html, re.S)[0]
+        self.assertIn("no check found", row)
+        self.assertIn('class="badge critical"', row)
+
+    def test_the_gate_result_is_on_the_page(self):
+        html = self.report()
+        self.assertTrue(self.data(html)["gate"]["passes"], self.data(html)["gate"])
+        self.assertIn("check --complete passes", html)
+        (self.repo / "src/extra.py").write_text("x = 1\n")  # a file the ledger does not list yet
+        html = self.report()
+        self.assertFalse(self.data(html)["gate"]["passes"])
+        self.assertTrue(any("files.csv does not list" in p for p in self.data(html)["gate"]["problems"]))
+        self.assertIn("does not pass", html)
+
+    def test_without_out_it_writes_to_the_temporary_folder(self):
+        code, out = run("report", str(self.repo))
+        self.assertEqual(code, 0, out)
+        path = Path(out.strip().splitlines()[-1].split(" ", 1)[1])
+        self.assertTrue(path.is_file())
+        self.assertTrue(path.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()))
+        self.assertFalse(path.resolve().is_relative_to(self.repo.resolve()))
 
 
 if __name__ == "__main__":

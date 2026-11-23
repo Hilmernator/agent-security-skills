@@ -35,6 +35,8 @@ security/
 
 These seven names are the whole folder. State goes into them; a note, a log or a report for one run belongs in the conversation or in a temporary folder.
 
+`gap.py report <repo>` turns the seven files into one HTML page for people: totals, the gaps by risk, every requirement with the lines that enforce it, the chapters, the invariants with their probe results, the Access policy, the coverage and the profile, with the result of `check --complete` at the top. The page is a view, not state: it is written to the temporary folder (or `--out <file>` outside `security/`), loads nothing from the network, and is made again whenever it is wanted.
+
 Write the Markdown files in the language the repository's instructions use for documentation; keep IDs, statuses and the CSVs in English. Change the CSVs only through `gap.py`.
 
 `gap.py check <repo>` is the gate. It fails while any file is unread, any inventory line is unreviewed, a boundary file is missing from the profile, the profile's Access policy is not in the shape local-dast reads, evidence does not resolve or rests on a file not read, a file changed after it was marked, or `security/` holds a file that is not one of the seven. Run it after every step; what it prints is the work that is left.
@@ -237,7 +239,7 @@ Start with the date, the commit, the selection, the totals and the coverage line
 
 - Every requirement ID the cause leaves `missing` or `partial`, and a one-line paraphrase.
 - Why it matters for this product, using the profile: who could do what to which data.
-- Risk: high, medium or low, from exposure (who can reach it) and impact (what data or action).
+- Risk: high, medium or low, from exposure (who can reach it) and impact (what data or action). End the entry's heading with it, `: high`, `: medium` or `: low`, in English in any language, because `gap.py report` ranks the entries by it.
 - The smallest fix, with the files to change.
 - A risk-list tag where one fits (for example `LLM01`, `ASI02`, `API1`, `CICD-SEC-4`); see [selection](references/selection.md).
 
@@ -252,7 +254,7 @@ Done when every `missing` and `partial` row's ID and every `broken` and `partial
 
 ## 8. Check and report
 
-Done when `gap.py check <repo> --complete` reports no problems. Tell the user the totals, the coverage, the top gaps, what needs checking outside the code, and what is not covered. When the profile has a PROPOSED Access policy, show the table and ask the owner to confirm or correct it, since local-dast judges the running app by it; apply their corrections and, once they confirm, replace the status line with `Status: confirmed by owner on <date>`. Offer to fix gaps; do not start without a yes. If the user accepts a risk, add an entry to `accepted-risks.md` (ID, reason in their words, date, review date) and set the row to `risk-accepted`.
+Done when `gap.py check <repo> --complete` reports no problems. Then run `gap.py report <repo>` and give the user the path it prints. Tell the user the totals, the coverage, the top gaps, what needs checking outside the code, and what is not covered. When the profile has a PROPOSED Access policy, show the table and ask the owner to confirm or correct it, since local-dast judges the running app by it; apply their corrections and, once they confirm, replace the status line with `Status: confirmed by owner on <date>`. Offer to fix gaps; do not start without a yes. If the user accepts a risk, add an entry to `accepted-risks.md` (ID, reason in their words, date, review date) and set the row to `risk-accepted`.
 
 ## Updating an existing security folder
 
