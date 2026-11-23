@@ -3,6 +3,8 @@ import contextlib
 import shutil
 import csv
 import io
+import datetime
+from html import escape as html_escape
 import json
 import re
 from pathlib import Path
@@ -662,6 +664,130 @@ class Report(unittest.TestCase):
         self.assertTrue(path.is_file())
         self.assertTrue(path.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()))
         self.assertFalse(path.resolve().is_relative_to(self.repo.resolve()))
+
+
+QUESTION = "Does the gateway refuse a delete from anyone but the record's owner?"
+
+
+class Verification(unittest.TestCase):
+    """Questions only someone outside the code can answer, the answers and where they came from (security/questions.csv)."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        (self.repo / "src").mkdir()
+        (self.repo / "src/__init__.py").write_text("")
+        (self.repo / "src/app.py").write_text(APP)
+        run("init", str(self.repo), "--select", "design:1")
+        run("files", str(self.repo), "--mark", ".", "--status", "read")
+        run("inventory", str(self.repo))
+        rows = Path(tempfile.mkdtemp()) / "rows.csv"
+        with rows.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "status", "evidence", "notes"])
+            w.writerow(["design", "not-applicable", "", "Fixture."])
+            w.writerow(["design:A2.1", "partial", "src/app.py:2-3", "Reads check the owner; deletes rely on the gateway."])
+            w.writerow(["design:A3.1", "unverifiable", "", "Enforced by the gateway, not in this repository."])
+        self.assertEqual(run("set", str(self.repo), "--from", str(rows))[0], 0)
+        (self.repo / "security/profile.md").write_text("# Profile\n")
+        (self.repo / "security/gaps.md").write_text(
+            "# Gaps\n\n## 1. Deletes rely on the gateway: medium\n\n- design:A2.1\n\n## Check outside the code\n\n- design:A3.1\n")
+
+    def ask(self, *keys, question=QUESTION):
+        return run("ask", str(self.repo), *keys, "--question", question, "--owner", "platform team", "--environment", "production")
+
+    def questions(self):
+        with (self.repo / "security/questions.csv").open() as f:
+            return list(csv.DictReader(f))
+
+    def page(self):
+        out = Path(tempfile.mkdtemp()) / "report.html"
+        self.assertEqual(run("report", str(self.repo), "--out", str(out))[0], 0)
+        html = out.read_text()
+        return html, json.loads(re.search(r'id="report-data">(.*?)</script>', html, re.S)[1])
+
+    def test_one_question_serves_every_row_that_shares_its_answer(self):
+        self.assertEqual(self.ask("design:A2.1")[0], 0)
+        code, out = self.ask("design:A3.1")
+        self.assertEqual(code, 0, out)
+        (q,) = self.questions()
+        self.assertEqual((q["id"], q["requirements"], q["owner"], q["environment"]), ("Q1", "design:A2.1 design:A3.1", "platform team", "production"))
+        self.assertNotEqual(self.ask("design:Z9.9", question="Something else?")[0], 0)
+        self.assertEqual(len(self.questions()), 1)
+
+    def test_an_answer_keeps_who_when_and_on_what_basis(self):
+        self.ask("design:A2.1", "design:A3.1")
+        code, out = run("answer", str(self.repo), "Q1", "--answer", "no", "--by", "Dana, platform team", "--basis", "owner",
+                        "--note", "Only GET is filtered at the gateway.")
+        self.assertEqual(code, 0, out)
+        (q,) = self.questions()
+        self.assertEqual((q["answer"], q["basis"], q["answered_by"]), ("no", "owner", "Dana, platform team"))
+        self.assertEqual(q["answered_at"], datetime.date.today().isoformat())
+        self.assertTrue(q["answered_for"])
+        code, out = run("questions", str(self.repo))
+        self.assertIn("Q1", out)
+        self.assertIn("answered no", out)
+        self.assertIn("design:A2.1", out)
+        with self.assertRaises(SystemExit):
+            run("answer", str(self.repo), "Q1", "--answer", "probably", "--by", "Dana", "--basis", "owner")
+
+    def test_complete_needs_a_question_for_every_unverifiable_row(self):
+        out = run("check", str(self.repo), "--complete")[1]
+        self.assertIn("design:A3.1: unverifiable, but no question in security/questions.csv", out)
+        self.ask("design:A3.1")
+        out = run("check", str(self.repo), "--complete")[1]
+        self.assertNotIn("no question in security/questions.csv", out)
+        self.assertEqual(run("check", str(self.repo), "--complete")[0], 0, out)
+
+    def test_answers_exported_from_the_page_come_back_in(self):
+        self.ask("design:A2.1", "design:A3.1")
+        self.ask("design:A2.1", question="Which team owns the gateway configuration?")
+        _, data = self.page()
+        digest = {q["id"]: q["digest"] for q in data["question_list"]}
+        export = Path(tempfile.mkdtemp()) / "answers.json"
+        answers = [{"id": "Q1", "digest": digest["Q1"], "answer": "yes", "note": "Checked the route table.", "by": "Dana", "at": "2026-11-23"},
+                   {"id": "Q2", "digest": "0" * 12, "answer": "yes", "note": "", "by": "Dana", "at": "2026-11-23"}]
+        export.write_text(json.dumps({"format": "security-gap-analysis answers 1", "answers": answers}))
+        code, out = run("answer", str(self.repo), "--from", str(export))
+        self.assertNotEqual(code, 0)
+        self.assertIn("Q2: the question or the code it rests on changed since the page was made", out)
+        self.assertEqual({q["answer"] for q in self.questions()}, {""})  # one bad line writes nothing
+        answers[1]["digest"] = digest["Q2"]
+        export.write_text(json.dumps({"format": "security-gap-analysis answers 1", "answers": answers}))
+        self.assertEqual(run("answer", str(self.repo), "--from", str(export))[0], 0)
+        first = self.questions()[0]
+        self.assertEqual((first["answer"], first["basis"], first["answered_by"], first["answered_at"], first["note"]),
+                         ("yes", "owner", "Dana", "2026-11-23", "Checked the route table."))
+
+    def test_an_answer_is_reviewed_again_when_the_code_it_rests_on_changes(self):
+        self.ask("design:A2.1", "design:A3.1")
+        run("answer", str(self.repo), "Q1", "--answer", "yes", "--by", "Dana", "--basis", "verified", "--note", "Gateway rule seen.")
+        self.assertNotIn("review", run("questions", str(self.repo))[1])
+        self.assertEqual(self.page()[1]["questions"], {"open": 0, "yes": 1, "no": 0, "review": 0})
+        (self.repo / "src/app.py").write_text(APP.replace("'owner'", "'admin'"))
+        self.assertIn("review", run("questions", str(self.repo))[1])
+        self.assertEqual(self.page()[1]["questions"], {"open": 0, "yes": 0, "no": 0, "review": 1})
+
+    def test_the_page_offers_the_owner_workflow(self):
+        self.ask("design:A2.1", "design:A3.1")
+        html, data = self.page()
+        self.assertEqual(data["questions"], {"open": 1, "yes": 0, "no": 0, "review": 0})
+        self.assertEqual(sum(data["totals"].values()), sum(1 for _ in csv.DictReader((self.repo / "security/requirements.csv").open())))
+        self.assertIn('data-filter="verify"', html)
+        row = re.search(r'<tr[^>]*id="req-design-A2\.1".*?</tr>', html, re.S)[0]
+        self.assertIn('data-verify="open"', row)
+        self.assertIn("src/app.py:2-3", row)  # the proven part and the open question in one row
+        self.assertIn(html_escape(QUESTION), row)
+        card = re.search(r'<article[^>]*id="question-Q1".*?</article>', html, re.S)[0]
+        for value in ("yes", "no", "unknown"):
+            self.assertIn(f'name="answer-Q1" value="{value}"', card)
+        self.assertIn("platform team", card)
+        self.assertIn('href="#req-design-A3.1"', card)
+        self.assertIn('id="export-answers"', html)
+
+    def test_a_page_without_questions_still_renders(self):
+        html, data = self.page()
+        self.assertEqual(data["questions"], {"open": 0, "yes": 0, "no": 0, "review": 0})
+        self.assertIn("design:A3.1", html)
 
 
 if __name__ == "__main__":

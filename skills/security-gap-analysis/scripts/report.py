@@ -1,6 +1,6 @@
 """The security folder as one HTML page: what is assessed, which controls are in place and where, what is missing.
 
-Called as `gap.py report REPO [--out FILE]`. It reads the seven files of security/ and the bundled catalogs, runs the
+Called as `gap.py report REPO [--out FILE]`. It reads the files of security/ and the bundled catalogs, runs the
 same gate as `gap.py check --complete`, and writes one self-contained page: no network, no external file, every
 text from the repository escaped. The page is a view of the folder, not state, so it is written outside it (by
 default to the temporary folder) and can be made again at any time.
@@ -102,7 +102,9 @@ def collect(repo: Path) -> dict:
             "chapters": chapters, "profile": profile, "invariants": rules or [], "policy": policy,
             "policy_status": (re.search(r"^Status: (.*)$", section(profile, "Access policy"), re.M) or [None, ""])[1],
             "files": files, "inventory": inventory, "summary": summary, "entries": entries, "closing": closing,
-            "accepted": read("accepted-risks.md"), "gate": gate(repo), "levels": levels}
+            "accepted": read("accepted-risks.md"), "gate": gate(repo), "levels": levels,
+            "questions": [q | {"state": gap.question_state(repo, q, rows), "digest": gap.question_digest(repo, q, rows)}
+                          for q in gap.load_questions(repo)]}
 
 
 def probe_result(cell: str) -> str:
@@ -269,12 +271,24 @@ def controls_section(d: dict, ids: dict) -> str:
     chips = "".join(f'<button type="button" class="chip" data-filter="{s}" aria-pressed="{"true" if s in ("met", "partial") else "false"}">'
                     f'<span class="sw s-{s}"></span>{esc(LABEL[s])} <span class="num">{sum(r["status"] == s for r in d["rows"])}</span></button>'
                     for s in ORDER if any(r["status"] == s for r in d["rows"]))
+    asked = {}
+    for q in d["questions"]:
+        for key in q["requirements"].split():
+            asked.setdefault(key, []).append(q)
+    waiting = sum(1 for qs in asked.values() if any(q["state"] in ("open", "review") for q in qs))
+    if asked:
+        chips += (f'<button type="button" class="chip verify" data-filter="verify" aria-pressed="false">? Needs verification '
+                  f'<span class="num">{waiting}</span></button>')
     body = []
     for r in sorted(d["rows"], key=lambda r: (r["standard"], gap.natural(r["id"]))):
         key = f'{r["standard"]}:{r["id"]}'
         notes = '<div class="notes">' + inline(r["notes"], ids) + "</div>" if r["notes"] else ""
-        search = " ".join([key, r["chapter"], r["section"], r["text"], r["evidence"], r["notes"]]).lower()
-        body.append(f'<tr id="{esc(anchor(key))}" data-status="{esc(r["status"])}" data-search="{esc(search)}">'
+        mine = asked.get(key, [])
+        verify = ("open" if any(q["state"] == "open" for q in mine) else "review" if any(q["state"] == "review" for q in mine)
+                  else "answered" if mine else "")
+        notes += "".join(question_line(q) for q in mine)
+        search = " ".join([key, r["chapter"], r["section"], r["text"], r["evidence"], r["notes"]] + [q["question"] for q in mine]).lower()
+        body.append(f'<tr id="{esc(anchor(key))}" data-status="{esc(r["status"])}" data-verify="{verify}" data-search="{esc(search)}">'
                     f'<td>{badge(r["status"])}</td><td class="id">{esc(key)}<div class="muted small">{esc(r["chapter"])}'
                     f'{" › " + esc(r["section"]) if r["section"] else ""}</div></td>'
                     f'<td>{esc(r["text"])}{notes}</td>'
@@ -285,6 +299,63 @@ def controls_section(d: dict, ids: dict) -> str:
             f'<div class="chips" role="group" aria-label="Status">{chips}</div><span id="shown" class="muted small"></span></div>'
             f'<div class="scroll"><table class="reqs"><thead><tr><th>Status</th><th>Requirement</th><th>What it asks, and the assessor\'s note</th>'
             f'<th>Enforced at</th></tr></thead><tbody>{"".join(body)}</tbody></table></div></section>')
+
+
+STATE_LABEL = {"open": "Needs verification", "review": "Answer to review", "yes": "Answered yes", "no": "Answered no"}
+STATE_KIND = {"open": "unverifiable", "review": "partial", "yes": "met", "no": "missing"}
+
+
+def provenance(q: dict, with_answer: bool = True) -> str:
+    if not q["answer"]:
+        return ""
+    basis = gap.BASES.get(q["basis"], q["basis"])
+    return ((f'{esc(q["answer"])} · ' if with_answer else "") + f'{esc(basis)} · {esc(q["answered_by"])}, {esc(q["answered_at"])}'
+            + (f' · {esc(q["note"])}' if q["note"] else ""))
+
+
+def question_line(q: dict) -> str:
+    """A question in the row of a requirement it serves: what is still to be verified, by whom, and any answer so far."""
+    who = esc(q["owner"]) + (f' ({esc(q["environment"])})' if q["environment"] else "")
+    answer = f'<div class="muted small">Answer: {provenance(q)}</div>' if q["answer"] else ""
+    return (f'<div class="ask s-border-{q["state"]}">{badge(STATE_KIND[q["state"]], STATE_LABEL[q["state"]])} '
+            f'<a href="#question-{esc(q["id"])}">{esc(q["id"])}</a> {esc(q["question"])} <span class="muted small">Ask: {who}</span>{answer}</div>')
+
+
+def questions_section(d: dict, ids: dict) -> str:
+    qs = d["questions"]
+    if not qs:
+        return ""
+    by_key = {f'{r["standard"]}:{r["id"]}': r for r in d["rows"]}
+    counts = {k: sum(q["state"] == k for q in qs) for k in ("open", "review", "yes", "no")}
+    labels = {"open": "Open", "review": "To review", "yes": "Yes", "no": "No"}
+    cards = []
+    for q in sorted(qs, key=lambda q: (["open", "review", "no", "yes"].index(q["state"]), gap.natural(q["id"]))):
+        rows = "".join(f'<li>{link(k, ids)} {badge(by_key[k]["status"]) if k in by_key else ""} '
+                       f'{evidence(by_key[k]["evidence"]) if k in by_key else ""}</li>' for k in q["requirements"].split())
+        radios = "".join(f'<label><input type="radio" name="answer-{esc(q["id"])}" value="{v}"> {v.capitalize()}</label>'
+                         for v in gap.ANSWERS)
+        where = f' · {esc(q["environment"])}' if q["environment"] else ""
+        said = {"yes": "met", "no": "missing"}.get(q["answer"], "unverifiable")
+        recorded = (f'<p class="recorded">Recorded: {badge(said, "Answered " + q["answer"])} {provenance(q, with_answer=False)}'
+                    + (" The question or the code it rests on changed since this answer; answer again." if q["state"] == "review" else "")
+                    + "</p>") if q["answer"] else ""
+        cards.append(f'<article class="question q-{q["state"]}" id="question-{esc(q["id"])}" data-id="{esc(q["id"])}" data-digest="{esc(q["digest"])}">'
+                     f'<header><span class="id">{esc(q["id"])}</span> {badge(STATE_KIND[q["state"]], STATE_LABEL[q["state"]])}'
+                     f'<span class="muted small">Ask: {esc(q["owner"])}{where}</span></header><h3>{esc(q["question"])}</h3>{recorded}'
+                     f'<ul class="rows">{rows}</ul><fieldset><legend>Your answer</legend><div class="radios">{radios}</div>'
+                     f'<input type="text" class="note" maxlength="500" placeholder="Short note or a reference to evidence (no secrets)" aria-label="Note for {esc(q["id"])}">'
+                     f'</fieldset></article>')
+    return (f'<section id="verification"><h2>Questions for owners</h2><p class="lede">What the code cannot show: each question asks '
+            f'one fact someone outside the repository knows, and lists the requirements its answer settles with the evidence the code '
+            f'already gives. An answer is recorded with who gave it, when and on what basis; an owner\'s word stays an owner statement, '
+            f'apart from code and from configuration someone has seen. A no leaves the gap open; unknown keeps the question open.</p>'
+            f'{segmented(counts, ["open", "review", "no", "yes"], "Questions by state", True, labels)}'
+            f'{legend(["open", "review", "no", "yes"], counts, labels)}'
+            f'<div class="answerbar"><label>Answered by <input type="text" id="answered-by" maxlength="120" placeholder="Name and role"></label>'
+            f'<button type="button" id="export-answers">Export answers</button><span id="answer-count" class="muted small"></span></div>'
+            f'<p class="muted small">Answers stay in this browser until exported. Import them with '
+            f'<code>gap.py answer {esc(d["name"])} --from &lt;the exported file&gt;</code>, then make the page again.</p>'
+            f'{"".join(cards)}</section>')
 
 
 def invariants_section(d: dict, ids: dict) -> str:
@@ -405,6 +476,7 @@ def page(d: dict) -> str:
     ids = {f'{r["standard"]}:{r["id"]}': anchor(f'{r["standard"]}:{r["id"]}') for r in rows}
     ids.update({r["ID"]: "inv-" + r["ID"] for r in d["invariants"]})
     ids.update({r[0]: "policy-" + r[0] for r in d["policy"][2:]})
+    ids.update({q["id"]: "question-" + q["id"] for q in d["questions"]})
     # gaps.md often names a requirement by its bare id (V6.3.1, A3.1): link it when exactly one selected standard has it.
     bare = {}
     for r in rows:
@@ -421,7 +493,9 @@ def page(d: dict) -> str:
     gap_counts = {k: sum(e["risk"] == k for e in d["entries"]) for k in RISKS}
     files_read = sum(int(r["lines"] or 0) for r in d["files"] if r["status"] in ("read", "skimmed"))
     files_total = sum(int(r["lines"] or 0) for r in d["files"]) or 1
-    data = {"totals": totals, "invariants": inv_states, "probes": probes, "gaps": gap_counts,
+    states = {k: sum(q["state"] == k for q in d["questions"]) for k in ("open", "yes", "no", "review")}
+    data = {"totals": totals, "invariants": inv_states, "probes": probes, "gaps": gap_counts, "questions": states,
+            "question_list": [{"id": q["id"], "digest": q["digest"]} for q in d["questions"]], "repo": d["name"],
             "gate": {"passes": d["gate"]["passes"], "problems": d["gate"]["problems"]}}
     blob = json.dumps(data).replace("<", "\\u003c")
     selection = ", ".join(f"{s.upper()} L{lvl}" for s, lvl in sorted(d["levels"].items()))
@@ -433,7 +507,9 @@ def page(d: dict) -> str:
         tile(f"{totals['met']}/{applies}", "requirements met", "of those that apply", "good"),
         tile(totals["partial"], "partly met", "", "warning"),
         tile(totals["missing"], "missing", "", "critical"),
-        tile(totals["unverifiable"], "to check outside the code"),
+        tile(states["open"] + states["review"], "questions for owners",
+             f'{totals["unverifiable"]} requirements to check outside the code', "warning" if states["open"] + states["review"] else "")
+        if d["questions"] else tile(totals["unverifiable"], "to check outside the code"),
         tile(f"{inv_states['broken'] + inv_states['partial']}/{len(rules)}", "invariants broken or partial", "",
              "critical" if inv_states["broken"] else "") if rules else
         tile("–", "security invariants", "profile.md states none"),
@@ -454,9 +530,9 @@ def page(d: dict) -> str:
                if d["profile"].strip() else "")
     accepted = (f'<section id="accepted"><h2>Accepted risks</h2><div class="md">{markdown(d["accepted"], ids)}</div></section>'
                 if d["accepted"].strip() else "")
-    sections = [overview, gaps_section(d, ids), controls_section(d, ids), requirements_section(d, ids), invariants_section(d, ids),
+    sections = [overview, gaps_section(d, ids), questions_section(d, ids), controls_section(d, ids), requirements_section(d, ids), invariants_section(d, ids),
                 policy_section(d, ids), coverage_section(d), accepted, profile]
-    nav = [("overview", "Overview"), ("gaps", "Gaps"), ("controls", "Controls"), ("requirements", "Chapters"),
+    nav = [("overview", "Overview"), ("gaps", "Gaps"), ("verification", "Questions"), ("controls", "Controls"), ("requirements", "Chapters"),
            ("invariants", "Invariants"), ("policy", "Access policy"), ("coverage", "Coverage"), ("accepted", "Accepted risks"),
            ("profile", "Profile")]
     body = "\n".join(s for s in sections if s)
@@ -511,6 +587,7 @@ pre{background:var(--plane);border:1px solid var(--ring);border-radius:8px;paddi
 .s-holds{background:var(--good)}.s-broken{background:var(--critical)}.s-high{background:var(--critical)}.s-medium{background:var(--serious)}
 .s-low{background:var(--warning);color:#0b0b0b}.s-unrated{background:var(--na);color:var(--ink)}
 .s-read{background:var(--good)}.s-skimmed{background:var(--blue)}.s-skipped{background:var(--na);color:var(--ink)}.s-unread{background:var(--critical)}
+.s-open{background:var(--blue)}.s-review{background:var(--warning);color:#0b0b0b}.s-yes{background:var(--good)}.s-no{background:var(--critical)}
 .s-boundary{background:var(--blue)}.s-internal{background:var(--na);color:var(--ink)}.s-test{background:var(--magenta)}.s-unreviewed{background:var(--critical)}
 .legend{list-style:none;display:flex;flex-wrap:wrap;gap:6px 16px;padding:0;margin:4px 0 10px;font-size:13px;color:var(--ink2)}
 .legend li{display:flex;align-items:center;gap:6px}.sw{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
@@ -539,6 +616,18 @@ input[type=search]{font:inherit;padding:7px 10px;border-radius:8px;border:1px so
 details summary{cursor:pointer;color:var(--ink2);font-weight:600;margin:8px 0}details.gate summary{font-weight:400}
 details.gate ul{max-height:280px;overflow:auto;font-size:13px;color:var(--ink2)}
 .link{text-decoration:underline dotted}
+.ask{margin-top:6px;padding:6px 8px;border-radius:6px;background:var(--plane);border-left:3px solid var(--blue);font-size:13px}
+.ask.s-border-review{border-left-color:var(--warning)}.ask.s-border-no{border-left-color:var(--critical)}.ask.s-border-yes{border-left-color:var(--good)}
+.question{border:1px solid var(--ring);border-left:4px solid var(--blue);border-radius:10px;padding:10px 16px;margin:12px 0}
+.question.q-review{border-left-color:var(--warning)}.question.q-no{border-left-color:var(--critical)}.question.q-yes{border-left-color:var(--good)}
+.question header{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.question .id{font-weight:700}.question h3{margin:6px 0}
+.question ul.rows{margin:6px 0 8px;padding-left:18px;font-size:13px}.question ul.rows li{margin:3px 0}
+.question fieldset{border:1px solid var(--grid);border-radius:8px;padding:8px 10px;margin:6px 0 2px}
+.question legend{font-size:12px;color:var(--ink2)}.radios{display:flex;gap:16px;margin-bottom:6px}
+.question input.note,.answerbar input{font:inherit;font-size:13px;padding:6px 8px;border-radius:6px;border:1px solid var(--axis);background:var(--surface);color:var(--ink);width:100%}
+.answerbar{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:8px 0}.answerbar label{font-size:13px;color:var(--ink2);flex:1;min-width:240px}
+#export-answers{font:inherit;font-size:13px;padding:7px 14px;border-radius:8px;border:1px solid var(--ink2);background:var(--ink);color:var(--surface);cursor:pointer}
+.recorded{font-size:13px;color:var(--ink2);margin:4px 0}.chip.verify{border-style:dashed}
 .tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--surface);font-size:12px;padding:5px 8px;border-radius:6px;z-index:10;display:none;max-width:320px}
 .theme{font:inherit;font-size:12px;border:1px solid var(--axis);background:var(--surface);color:var(--ink2);border-radius:8px;padding:4px 8px}
 tr:target,article:target{outline:2px solid var(--blue);outline-offset:-2px}
@@ -558,14 +647,39 @@ JS = """
   var rows=[].slice.call(document.querySelectorAll('table.reqs tbody tr')),chips=[].slice.call(document.querySelectorAll('.chip')),
       q=document.getElementById('search'),shown=document.getElementById('shown');
   function apply(){var on=chips.filter(function(c){return c.getAttribute('aria-pressed')==='true';}).map(function(c){return c.dataset.filter;}),
-      term=(q&&q.value||'').toLowerCase().trim(),n=0;
-    rows.forEach(function(r){var ok=(on.length===0||on.indexOf(r.dataset.status)>=0)&&(!term||r.dataset.search.indexOf(term)>=0);
-      r.hidden=!ok;if(ok)n++;});if(shown)shown.textContent=n+' of '+rows.length+' shown';}
-  chips.forEach(function(c){c.addEventListener('click',function(){c.setAttribute('aria-pressed',c.getAttribute('aria-pressed')==='true'?'false':'true');apply();});});
+      verify=on.indexOf('verify')>=0,term=(q&&q.value||'').toLowerCase().trim(),n=0;
+    rows.forEach(function(r){var ok=(verify?(r.dataset.verify==='open'||r.dataset.verify==='review'):(on.length===0||on.indexOf(r.dataset.status)>=0))
+      &&(!term||r.dataset.search.indexOf(term)>=0);r.hidden=!ok;if(ok)n++;});if(shown)shown.textContent=n+' of '+rows.length+' shown';}
+  chips.forEach(function(c){c.addEventListener('click',function(){var press=c.getAttribute('aria-pressed')!=='true';
+    chips.forEach(function(o){if((c.dataset.filter==='verify')!==(o.dataset.filter==='verify'))o.setAttribute('aria-pressed','false');});
+    c.setAttribute('aria-pressed',press?'true':'false');apply();});});
   if(q)q.addEventListener('input',apply);
   function reveal(){var id=location.hash.slice(1),el=id&&document.getElementById(id);
     if(el&&el.hidden){chips.forEach(function(c){if(c.dataset.filter===el.dataset.status)c.setAttribute('aria-pressed','true');});apply();el.scrollIntoView();}}
   addEventListener('hashchange',reveal);apply();reveal();
+  var data=JSON.parse(document.getElementById('report-data').textContent),key='gap-answers:'+data.repo,store={};
+  try{store=JSON.parse(localStorage.getItem(key)||'{}');}catch(e){store={};}
+  var cards=[].slice.call(document.querySelectorAll('article.question')),by=document.getElementById('answered-by'),
+      count=document.getElementById('answer-count');
+  function save(){try{localStorage.setItem(key,JSON.stringify(store));}catch(e){}
+    var n=Object.keys(store).filter(function(k){return store[k].answer;}).length;if(count)count.textContent=n+' answered in this browser';}
+  if(by){by.value=store.__by||'';by.addEventListener('input',function(){store.__by=by.value;save();});}
+  cards.forEach(function(card){var id=card.dataset.id,digest=card.dataset.digest,mine=store[id];
+    if(mine&&mine.digest!==digest){delete store[id];mine=null;}
+    var note=card.querySelector('input.note');
+    card.querySelectorAll('input[type=radio]').forEach(function(r){if(mine&&mine.answer===r.value)r.checked=true;
+      r.addEventListener('change',function(){store[id]={digest:digest,answer:r.value,note:note.value,at:new Date().toISOString().slice(0,10)};save();});});
+    if(mine&&note)note.value=mine.note||'';
+    if(note)note.addEventListener('input',function(){if(store[id]){store[id].note=note.value;save();}});});
+  var ex=document.getElementById('export-answers');
+  if(ex)ex.addEventListener('click',function(){var who=(by&&by.value||'').trim();
+    if(!who){by.focus();by.setAttribute('aria-invalid','true');return;}
+    var out=Object.keys(store).filter(function(k){return k!=='__by'&&store[k].answer;}).map(function(k){
+      return {id:k,digest:store[k].digest,answer:store[k].answer,note:store[k].note||'',by:who,at:store[k].at};});
+    var blob=new Blob([JSON.stringify({format:'security-gap-analysis answers 1',repo:data.repo,answers:out},null,2)],{type:'application/json'}),
+        a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='answers-'+data.repo+'.json';
+    document.body.appendChild(a);a.click();a.remove();});
+  save();
   var b=document.querySelector('.theme');if(b){b.addEventListener('click',function(){var d=document.documentElement,
     t=d.getAttribute('data-theme');t=t==='dark'?'light':t==='light'?null:'dark';
     if(t)d.setAttribute('data-theme',t);else d.removeAttribute('data-theme');b.textContent='Theme: '+(t||'auto');});}

@@ -11,6 +11,10 @@
   gap.py probe     REPO INVARIANT --copy DIR --file PATH --old TEXT --new TEXT -- COMMAND ...
   gap.py probe     REPO --batch probes.csv --copy DIR -- COMMAND ...   (header id,file,old,new; one baseline)
   gap.py report    REPO [--out FILE]   (one HTML page of the whole analysis, written outside security/)
+  gap.py ask       REPO REQ [REQ ...] --question TEXT --owner WHO [--environment ENV]
+  gap.py answer    REPO QID --answer yes|no|unknown --by WHO --basis owner|source|verified [--note TEXT]
+  gap.py answer    REPO --from answers.json   (exported from the report page; all lines checked before any is written)
+  gap.py questions REPO [--open]
 
 A PREFIX is standard:id-prefix, for example asvs:V6, asvs:V6.2.1, aisvs:9, aisvs-ac:AC.4, masvs:MASVS-STORAGE.
 A PATH is a file or a directory; "." is the whole repository.
@@ -39,7 +43,17 @@ FILE_STATUSES = ["unread", "read", "skimmed", "skipped"]
 INV_FIELDS = ["kind", "path", "line", "text", "status", "notes"]
 INV_STATUSES = ["unreviewed", "boundary", "internal", "test"]
 # The whole folder. A file outside this list is a problem: state lives in these, not in one more file per run.
-SECURITY_FILES = ["profile.md", "files.csv", "inventory.csv", "requirements.csv", "gaps.md", "accepted-risks.md", "findings.csv"]
+SECURITY_FILES = ["profile.md", "files.csv", "inventory.csv", "requirements.csv", "questions.csv", "gaps.md", "accepted-risks.md",
+                  "findings.csv"]
+# Questions only someone outside the code can answer (an identity provider's policy, a gateway rule, a deployed setting),
+# with their answers and where each answer came from. Implementation status stays in requirements.csv; this is the verification work.
+QUESTION_FIELDS = ["id", "question", "requirements", "environment", "owner", "answer", "basis", "note", "answered_by", "answered_at",
+                   "answered_for"]
+ANSWERS = ["yes", "no", "unknown"]
+# What an answer rests on, weakest first. The owner's word is recorded as such, never as evidence from the code.
+BASES = {"owner": "owner statement", "source": "source or IaC evidence", "verified": "independently verified configuration"}
+EXPORT_FORMAT = "security-gap-analysis answers 1"
+MAX_TEXT = 500
 # findings.csv is written by ledger.py of local-security-review and local-dast; this is its header.
 FINDING_FIELDS = ["fingerprint", "skill", "rule", "path", "status", "basis", "sha", "first_seen", "last_seen", "note"]
 SKIP_DIRS = {".git", "node_modules", "target", "dist", "build", ".venv", "venv", "__pycache__", "vendor", ".next"}
@@ -836,6 +850,7 @@ def check(args):
         errors.append(f'{total["unassessed"]} requirements are unassessed')
     if args.complete:
         errors += gaps_problems(repo, rows)
+    errors += question_problems(repo, rows, args.complete)
     if ledgers:
         frows, irows = ledgers
         print(coverage_line(frows))
@@ -857,6 +872,161 @@ def report(args):
     page.write(repo, out)
     print(f"wrote {out.resolve()}")
     return 0
+
+
+def questions_path(repo):
+    return Path(repo) / "security" / "questions.csv"
+
+
+def load_questions(repo):
+    return read_csv(questions_path(repo), QUESTION_FIELDS) or []
+
+
+def clean(text, name):
+    """One line of plain text from a person or an exported page: no control characters, a bounded length."""
+    text = re.sub(r"\s+", " ", re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", str(text or ""))).strip()
+    if len(text) > MAX_TEXT:
+        sys.exit(f"{name} is longer than {MAX_TEXT} characters")
+    return text
+
+
+def question_digest(repo, q, rows):
+    """What an answer was given for: the question, the rows it serves, their evidence and the bytes of the files that evidence cites.
+    When any of these changes, the answer is shown for review again."""
+    by_key = {f'{r["standard"]}:{r["id"]}': r for r in rows}
+    h = hashlib.sha1(q["question"].encode())
+    for key in sorted(q["requirements"].split()):
+        r = by_key.get(key, {})
+        h.update(f'\0{key}\0{r.get("evidence", "")}'.encode())
+        for item in evidence_items(r) if r else []:
+            m = EVIDENCE.match(item)
+            path = (Path(repo) / m["path"]) if m else None
+            if path and path.is_file():
+                h.update(path.read_bytes())
+    return h.hexdigest()[:12]
+
+
+def question_state(repo, q, rows):
+    """open (no answer, or unknown), yes or no, or review: answered, but what it was answered for has changed."""
+    if q["answer"] in ("", "unknown"):
+        return "open"
+    return q["answer"] if q["answered_for"] == question_digest(repo, q, rows) else "review"
+
+
+def ask(args):
+    repo, rows = Path(args.repo), load(args.repo)
+    keys = {f'{r["standard"]}:{r["id"]}' for r in rows}
+    unknown = [k for k in args.requirements if k not in keys]
+    if unknown:
+        print(f"problem: {', '.join(unknown)}: matches no row of requirements.csv; give standard:id, such as asvs:V6.3.1")
+        return 1
+    question, owner = clean(args.question, "--question"), clean(args.owner, "--owner")
+    environment = clean(args.environment, "--environment")
+    if not question or not owner:
+        sys.exit("a question and who can answer it are both needed")
+    qs = load_questions(repo)
+    same = [q for q in qs if q["question"].casefold() == question.casefold() and q["environment"] == environment]
+    if same:  # one answer serves every row that shares it, so the owner is asked once
+        q = same[0]
+        q["requirements"] = " ".join(sorted(set(q["requirements"].split()) | set(args.requirements), key=natural))
+        q["owner"] = owner
+    else:
+        number = max([int(q["id"][1:]) for q in qs if q["id"][1:].isdigit()] + [0]) + 1
+        q = dict.fromkeys(QUESTION_FIELDS, "") | {"id": f"Q{number}", "question": question, "environment": environment, "owner": owner,
+                                                  "requirements": " ".join(sorted(set(args.requirements), key=natural))}
+        qs.append(q)
+    write_csv(questions_path(repo), QUESTION_FIELDS, qs)
+    print(f'{q["id"]}: {q["question"]} ({q["requirements"]})')
+    return 0
+
+
+def answer(args):
+    repo, rows = Path(args.repo), load(args.repo)
+    qs = load_questions(repo)
+    by_id = {q["id"]: q for q in qs}
+    if args.from_file:
+        if args.id or args.answer:
+            sys.exit("--from takes the answers from the file; give no question id or --answer")
+        try:
+            doc = json.loads(Path(args.from_file).read_text())
+        except (OSError, ValueError) as error:
+            sys.exit(f"{args.from_file}: not an answers file ({error})")
+        if not isinstance(doc, dict) or doc.get("format") != EXPORT_FORMAT or not isinstance(doc.get("answers"), list):
+            sys.exit(f'{args.from_file}: not an answers file exported from the report page (format "{EXPORT_FORMAT}")')
+        lines, errors = [], []
+        for n, line in enumerate(doc["answers"], 1):
+            line = line if isinstance(line, dict) else {}
+            q = by_id.get(str(line.get("id", "")))
+            when = str(line.get("at", ""))
+            if q is None:
+                errors.append(f"answer {n}: {line.get('id')!r} is not a question in security/questions.csv")
+            elif line.get("digest") != question_digest(repo, q, rows):
+                errors.append(f"{q['id']}: the question or the code it rests on changed since the page was made; make the page again and answer there")
+            elif line.get("answer") not in ANSWERS:
+                errors.append(f"{q['id']}: answer {line.get('answer')!r} is not {', '.join(ANSWERS)}")
+            elif not clean(line.get("by"), "by"):
+                errors.append(f"{q['id']}: no name for who answered")
+            elif not re.fullmatch(r"\d{4}-\d{2}-\d{2}", when):
+                errors.append(f"{q['id']}: the date {when!r} is not YYYY-MM-DD")
+            else:
+                lines.append((q, line["answer"], clean(line.get("by"), "by"), "owner", clean(line.get("note"), "note"), when))
+        for e in errors:
+            print("problem: " + e)
+        if errors:
+            print("nothing was written")
+            return 1
+    else:
+        if not args.id or not args.answer or not args.by or not args.basis:
+            sys.exit("answer needs a question id, --answer, --by and --basis, or --from FILE")
+        if args.id not in by_id:
+            sys.exit(f"{args.id} is not a question in security/questions.csv")
+        lines = [(by_id[args.id], args.answer, clean(args.by, "--by"), args.basis, clean(args.note, "--note"),
+                  datetime.date.today().isoformat())]
+    for q, value, who, basis, note, when in lines:
+        q.update(answer=value, answered_by=who, basis=basis, note=note, answered_at=when, answered_for=question_digest(repo, q, rows))
+        print(f'{q["id"]}: {value} ({BASES[basis]}, {who}, {when}); review {q["requirements"]}')
+    write_csv(questions_path(repo), QUESTION_FIELDS, qs)
+    return 0
+
+
+def list_questions(args):
+    repo, rows = Path(args.repo), load(args.repo)
+    by_key = {f'{r["standard"]}:{r["id"]}': r for r in rows}
+    for q in load_questions(repo):
+        state = question_state(repo, q, rows)
+        if args.open and state not in ("open", "review"):
+            continue
+        said = {"open": "open" if not q["answer"] else "open (answered unknown)", "review": f'answered {q["answer"]}, review: '
+                "the question or the code it rests on changed since"}.get(state, f"answered {state}")
+        print(f'{q["id"]}\t{said}\t{q["owner"]}' + (f' ({q["environment"]})' if q["environment"] else ""))
+        print(f'  {q["question"]}')
+        for key in q["requirements"].split():
+            r = by_key.get(key, {})
+            print(f'  {key}\t{r.get("status", "?")}' + (f'\t{r["evidence"]}' if r.get("evidence") else ""))
+        if q["answer"]:
+            print(f'  answer: {q["answer"]} by {q["answered_by"]} on {q["answered_at"]} ({BASES.get(q["basis"], q["basis"])})'
+                  + (f': {q["note"]}' if q["note"] else ""))
+    return 0
+
+
+def question_problems(repo, rows, complete):
+    """questions.csv names real rows and records every answer's who, when and basis; with --complete, every unverifiable row is asked."""
+    keys = {f'{r["standard"]}:{r["id"]}' for r in rows}
+    qs, out = load_questions(repo), []
+    for q in qs:
+        where = f'security/questions.csv {q["id"]}'
+        if not q["question"] or not q["owner"]:
+            out.append(f"{where}: needs a question and who can answer it")
+        out += [f"{where}: {k} is not a row of requirements.csv" for k in q["requirements"].split() if k not in keys]
+        if q["answer"] not in ANSWERS + [""]:
+            out.append(f'{where}: answer "{q["answer"]}" is not {", ".join(ANSWERS)} or empty')
+        elif q["answer"] and (q["basis"] not in BASES or not q["answered_by"] or not q["answered_at"]):
+            out.append(f"{where}: an answer needs who gave it, when, and its basis ({', '.join(BASES)})")
+    if complete:
+        asked = {k for q in qs for k in q["requirements"].split()}
+        out += [f'{r["standard"]}:{r["id"]}: unverifiable, but no question in security/questions.csv asks anyone to verify it '
+                "(gap.py ask)" for r in rows if r["status"] == "unverifiable" and f'{r["standard"]}:{r["id"]}' not in asked]
+    return out
 
 
 def main(argv=None):
@@ -907,6 +1077,23 @@ def main(argv=None):
     p.add_argument("--new", help="what replaces it, so that the control no longer acts")
     p.add_argument("--batch", metavar="CSV", help="many probes, one baseline: a CSV with the header id,file,old,new")
     p.add_argument("--timeout", type=int, default=600)
+    p = sub.add_parser("ask", help="record a question only someone outside the code can answer, for one or more requirement rows")
+    p.add_argument("repo")
+    p.add_argument("requirements", nargs="+", metavar="REQ", help="standard:id of each row the answer settles")
+    p.add_argument("--question", required=True, help="one concrete question with a yes or no answer")
+    p.add_argument("--owner", required=True, help="who can answer it: a team or a role")
+    p.add_argument("--environment", default="", help="where it applies, such as production")
+    p = sub.add_parser("answer", help="record an answer with who gave it, when and on what basis, or import answers from the report page")
+    p.add_argument("repo")
+    p.add_argument("id", nargs="?", help="the question's id, such as Q3")
+    p.add_argument("--answer", choices=ANSWERS)
+    p.add_argument("--by", help="who answered")
+    p.add_argument("--basis", choices=list(BASES), help="owner: the owner's word; source: code or IaC; verified: configuration seen")
+    p.add_argument("--note")
+    p.add_argument("--from", dest="from_file", metavar="JSON", help="answers exported from the report page")
+    p = sub.add_parser("questions", help="list the questions for owners, grouped with the rows each one settles")
+    p.add_argument("repo")
+    p.add_argument("--open", action="store_true", help="only those without an answer, answered unknown, or due for review")
     p = sub.add_parser("report", help="write the whole analysis as one self-contained HTML page, outside security/")
     p.add_argument("repo")
     p.add_argument("--out", help="the HTML file to write; default: the temporary folder, one file per repository")
@@ -942,7 +1129,8 @@ def locked(repo, create):
 
 def run_command(args):
     code = {"init": init, "show": show, "set": set_, "files": files, "inventory": inventory,
-            "check": check, "probe": probe, "controls": controls, "report": report}[args.cmd](args) or 0
+            "check": check, "probe": probe, "controls": controls, "report": report, "ask": ask, "answer": answer,
+            "questions": list_questions}[args.cmd](args) or 0
     if args.cmd in ("init", "files", "inventory"):
         ensure_ignored(args.repo, "security/")
     return code

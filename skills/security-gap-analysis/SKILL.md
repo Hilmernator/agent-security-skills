@@ -28,18 +28,19 @@ security/
   files.csv           every file: unread, read, skimmed or skipped, with its hash when marked
   inventory.csv       every boundary signal found by pattern: boundary, internal or test, with a reason
   requirements.csv    one row per requirement: standard,id,level,status,evidence,notes,assessed
+  questions.csv       questions only someone outside the code can answer, the rows each settles, and each answer with who, when and basis
   gaps.md             missing and partial controls by risk, with the smallest fix; coverage; what to check outside the code
   accepted-risks.md   risks the owner chose to accept, with reason and date; only the user decides these
   findings.csv        the findings ledger of local-security-review and local-dast, written by their ledger.py; never by this skill
 ```
 
-These seven names are the whole folder. State goes into them; a note, a log or a report for one run belongs in the conversation or in a temporary folder.
+These eight names are the whole folder. State goes into them; a note, a log or a report for one run belongs in the conversation or in a temporary folder.
 
-`gap.py report <repo>` turns the seven files into one HTML page for people: totals, the gaps by risk, every requirement with the lines that enforce it, the chapters, the invariants with their probe results, the Access policy, the coverage and the profile, with the result of `check --complete` at the top. The page is a view, not state: it is written to the temporary folder (or `--out <file>` outside `security/`), loads nothing from the network, and is made again whenever it is wanted.
+`gap.py report <repo>` turns them into one HTML page for people: totals, the gaps by risk, the questions for owners with a form to answer them, every requirement with the lines that enforce it, the chapters, the invariants with their probe results, the Access policy, the coverage and the profile, with the result of `check --complete` at the top. The page is a view, not state: it is written to the temporary folder (or `--out <file>` outside `security/`), loads nothing from the network, and is made again whenever it is wanted.
 
 Write the Markdown files in the language the repository's instructions use for documentation; keep IDs, statuses and the CSVs in English. Change the CSVs only through `gap.py`.
 
-`gap.py check <repo>` is the gate. It fails while any file is unread, any inventory line is unreviewed, a boundary file is missing from the profile, the profile's Access policy is not in the shape local-dast reads, evidence does not resolve or rests on a file not read, a file changed after it was marked, or `security/` holds a file that is not one of the seven. Run it after every step; what it prints is the work that is left.
+`gap.py check <repo>` is the gate. It fails while any file is unread, any inventory line is unreviewed, a boundary file is missing from the profile, the profile's Access policy is not in the shape local-dast reads, evidence does not resolve or rests on a file not read, a file changed after it was marked, or `security/` holds a file that is not one of the eight. Run it after every step; what it prints is the work that is left.
 
 If the repository already has a `security/` folder, follow "Updating an existing security folder" below instead of steps 1 to 8.
 
@@ -191,6 +192,7 @@ Evidence rules:
 - For requirements about all inputs, all endpoints or all responses, compare against every `boundary` line in the inventory. One protected route does not make the requirement met.
 - Tests show intent, not enforcement. Cite the enforcing code; a test can be extra evidence.
 - If you cannot tell, the status is `partial` or `unverifiable` with a note, never `met`.
+- A requirement the code meets in part and an outside system must complete (an identity provider, a gateway, a deployed setting) is `partial`, with evidence for the part the code or IaC proves and notes saying exactly what remains. A provider integration is not evidence for an unrelated control: configuring federation establishes no MFA policy.
 - Requirements about process (reviews, training, incident handling) are `unverifiable` unless the repository holds the evidence, such as a CI gate.
 
 ```sh
@@ -198,6 +200,14 @@ python3 <skill-dir>/scripts/gap.py set <repo> asvs:V6.3.1 --status missing --not
 ```
 
 To set many rows at once, write them to a CSV with the header `id,status,evidence,notes` (one line per requirement, section or chapter) and run `gap.py set <repo> --from <file>`; every line is checked first, and one bad line writes nothing. `set` takes a chapter (`asvs:V6`), a section (`asvs:V6.5`) or one requirement, so a section the product has nothing of (no MFA, no XML) is one call with its reason. A requirement that is met by something being absent (no `eval`, no password hints) is `met` with the line that shows what is used in its place, or `not-applicable` when the product has no such feature at all.
+
+**Ask what the code cannot show.** For each `unverifiable` row, and each `partial` row whose remaining part lives outside the repository, record one concrete question that someone can answer yes or no, who can answer it, and where it applies:
+
+```sh
+python3 <skill-dir>/scripts/gap.py ask <repo> asvs:V6.3.3 asvs:V6.3.4 --question "Does the identity provider require MFA for every user group in production?" --owner "identity team" --environment production
+```
+
+One question serves every row its answer settles: asking the same question for another row adds the row to it, so the owner is asked once. Ask about the fact, not the requirement ("Does reuse of an invalidated refresh token revoke the whole token family for this client?", not "Is V9.2.3 met?"). A question is not a status: the row keeps its own status, evidence and notes, and the question stands beside it. `check --complete` fails while an `unverifiable` row has no question.
 
 Then assess each security invariant the same way: read every line in its `Enforced at`, look for a path to the same data or action that passes none of them, and set `Status`. A `design` row and an invariant often answer each other: cite the invariant ID in the row's notes.
 
@@ -254,7 +264,16 @@ Done when every `missing` and `partial` row's ID and every `broken` and `partial
 
 ## 8. Check and report
 
-Done when `gap.py check <repo> --complete` reports no problems. Then run `gap.py report <repo>` and give the user the path it prints. Tell the user the totals, the coverage, the top gaps, what needs checking outside the code, and what is not covered. When the profile has a PROPOSED Access policy, show the table and ask the owner to confirm or correct it, since local-dast judges the running app by it; apply their corrections and, once they confirm, replace the status line with `Status: confirmed by owner on <date>`. Offer to fix gaps; do not start without a yes. If the user accepts a risk, add an entry to `accepted-risks.md` (ID, reason in their words, date, review date) and set the row to `risk-accepted`.
+Done when `gap.py check <repo> --complete` reports no problems. Then run `gap.py report <repo>` and give the user the path it prints. Tell the user the totals, the coverage, the top gaps, what needs checking outside the code, and what is not covered. When the profile has a PROPOSED Access policy, show the table and ask the owner to confirm or correct it, since local-dast judges the running app by it; apply their corrections and, once they confirm, replace the status line with `Status: confirmed by owner on <date>`. Offer to fix gaps; do not start without a yes.
+
+**Answers from owners.** Ask the open questions (`gap.py questions <repo> --open`) in the conversation, grouped by who can answer them, or let the owner answer them on the report page and export the file. Record each answer with its basis:
+
+```sh
+python3 <skill-dir>/scripts/gap.py answer <repo> Q3 --answer no --by "Dana, identity team" --basis owner --note "MFA only for admins."
+python3 <skill-dir>/scripts/gap.py answer <repo> --from <answers exported from the page>
+```
+
+`--basis owner` is the owner's word, `source` is code or IaC you cited, `verified` is configuration you or they showed (a console screenshot's reference, a policy export), never a secret. An imported page answer is always `owner`. Then reassess the rows the answer serves: a `yes` from the owner supports `met` only together with the code's part and says so in the notes; a `no` makes the remaining part `missing` and gives it an entry in `gaps.md`; `unknown` keeps the question open. An answer shows as due for review when its question, its rows' evidence or the files that evidence cites change; ask again. Nothing in `questions.csv` is a verdict on its own: the requirement row is. If the user accepts a risk, add an entry to `accepted-risks.md` (ID, reason in their words, date, review date) and set the row to `risk-accepted`.
 
 ## Updating an existing security folder
 
