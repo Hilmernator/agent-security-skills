@@ -2,6 +2,12 @@
 
 What changed in each version, newest first, and what an existing installation must do about it.
 
+## Unreleased
+
+- local-security-review and local-dast: every script hands over to Python 3.10+ by itself when `python3` is older (`_python.py`); before, a stock macOS `python3` (3.9) had to be replaced by hand. Nothing to do on an installation.
+- local-security-review: Bandit's `assert` check and ESLint's object-injection check are left out in test files and counted under `coverage.filtered` (on large repositories they were most of the candidates). A partial language scan says how many files and which. The hunt asks for every outbound request a user can aim and for the defaults of security settings, step 5 keeps at least a third of the session, a missing check is placed at the function that should hold it, and a host's refusal to read a `.env` file is recorded as a coverage gap instead of retried.
+- security-gap-analysis: `set` writes nothing when a row has a problem (it saved evidence past the end of a file); a chapter may be named as `check` prints it (`aisvs:C1`); `show --compact` prints one line per row; `profile.md` may name boundary files by folder (`src/routes/`) or glob; a `read` mark over more than ten files is recorded as a bulk mark, and `check --complete` refuses a boundary file read only that way. On a repository too large to read in full, the skill reads by risk and says what it left.
+
 ## 0.4.0
 
 security-gap-analysis gets a design layer. Requirements ask whether a named control exists; products usually fail in how controls compose, and in a blind run on a planted-flaw application of 2026-11-18 rows were correctly `met` inside functions whose design was broken (cross-tenant signing keys, a protocol session that replaced the token's identity, consent remembered by name). Three additions, all in the existing files:

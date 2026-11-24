@@ -77,7 +77,7 @@ def validate_assessment(item):
     if item["disposition"] == "false-positive":
         require_text(item, "dismissal_reason")
         if item["confidence"] != "high":
-            raise ValueError("False-positive requires high confidence; otherwise use needs-review")
+            raise ValueError("False-positive requires high confidence; otherwise use needs-review. For a group of IDs, split out the ones you can dismiss with high confidence and mark the rest needs-review")
     elif item["disposition"] in ACTIONABLE:
         require_text(item, "preconditions")
     if "proof" in item:
@@ -376,4 +376,5 @@ def main():
 
 
 if __name__ == "__main__":
+    __import__("_python").ensure()  # Python 3.10+ even when python3 is 3.9
     main()

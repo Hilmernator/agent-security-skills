@@ -9,7 +9,7 @@ Review the code the way a careful security engineer would, with scanners as a he
 
 Every finding is reported in one of three tiers. `confirmed`: a proof test failed twice on its assertion under `prove.py`. `judged`: you read the code path and believe it, but no proof ran, and one line says why. `scanner`: a signal not yet judged. Rereading your own finding is not a proof, and an unproven finding is never dropped for lack of one; it stays in its tier.
 
-Call scripts by absolute path (`<skill-dir>/scripts/...`), never from the target repository and without `cd`. Scripts need Python 3.10+. If `python3` is older, use another interpreter (for example `uv run --python 3.12 python`). Report directories are private temporary folders outside the repository.
+Call scripts by absolute path (`<skill-dir>/scripts/...`), never from the target repository and without `cd`. Scripts need Python 3.10+; run them with `python3` all the same: when it is older, each script hands over to a newer interpreter on PATH or found by `uv` by itself. Only if `--check` still reports `python: incompatible` is none installed. Report directories are private temporary folders outside the repository.
 
 The Boundaries at the end hold for every step.
 
@@ -48,7 +48,7 @@ Done when `context.md` exists and every server, handler group and command the co
 
 Follow [investigate](references/investigate.md): trace source to sink, decide who can reach it and the concrete impact, and prove it: write a test in a temporary copy, modelled on a test the project already has, and run it with `scripts/prove.py`, which records it in `proofs.json`. Save `assessments.json` beside the report. One entry may cover many IDs with `ids` when one rationale truly fits each of them (for example the same rule in test fixtures).
 
-Many candidates? Start with high scanner severity and code closest to entrypoints. With more than about 30 candidates, or several independent subsystems, split the work: give each subagent `context.md`, its list of IDs and the investigate reference, and merge the JSON arrays they return. Never drop an ID; unassessed IDs stay `unreviewed`.
+Many candidates? Start with high scanner severity and code closest to entrypoints. Dismiss by rule, not one by one: when one rationale fits every hit of a rule in the same kind of code, write one entry with `ids` (Bandit's `assert` check and ESLint's object-injection check in test files are already left out by the scanner and counted in the report's coverage). The scanners are a head start, not the review: keep at least a third of the session for step 5, because the flaws scanners do not see are most of what a review misses. A run that spends its session on thousands of scanner candidates misses the request forgery and authorization flaws that no scanner sees. With more than about 30 candidates, or several independent subsystems, split the work: give each subagent `context.md`, its list of IDs and the investigate reference, and merge the JSON arrays they return. Never drop an ID; unassessed IDs stay `unreviewed`.
 
 Done when `render_review.py` (step 6) counts no `unreviewed` ID, or you can name the ones left and why.
 

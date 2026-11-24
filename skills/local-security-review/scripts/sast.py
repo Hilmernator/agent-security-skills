@@ -5,6 +5,7 @@ import argparse
 import copy
 from datetime import datetime, timezone
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -76,6 +77,24 @@ def relative_path(name, target):
     return str(path.resolve().relative_to(target))
 
 
+# Rules that are almost all noise in test code: Bandit's assert check and ESLint's object-injection check. Kept for
+# product code. On large repositories they are most of the candidates.
+TEST_NOISE = {"B101", "security/detect-object-injection"}
+TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec|specs)/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[cm]?[jt]sx?$")
+
+
+def is_test_noise(rule, path):
+    return rule in TEST_NOISE and bool(TEST_PATH.search(path))
+
+
+def partial_reason(errors, missing, selected):
+    """Why a language scan is incomplete, in one line the agent can act on."""
+    items = [f'{e["path"]} ({e["type"]})' for e in errors] + [f"{p} (not in scanner output)" for p in missing]
+    shown = ", ".join(items[:5]) + (f" and {len(items) - 5} more" if len(items) > 5 else "")
+    return (f"Scanner could not analyze {len(items)} of {selected} selected files: {shown}; "
+            "findings for the other files are kept (see coverage.errors and coverage.missing_paths)")
+
+
 def project(engine, data, target):
     findings, scanned, errors = [], [], []
     if engine == "bandit":
@@ -99,8 +118,12 @@ def project(engine, data, target):
                                  "end_line": message.get("endLine", message["line"]),
                                  "scanner_severity": "ERROR" if message["severity"] == 2 else "WARNING",
                                  "metadata": {}})
+    filtered = {}
+    for f in [f for f in findings if is_test_noise(f["rule"], f["path"])]:
+        filtered[f"{f['rule']} in test files"] = filtered.get(f"{f['rule']} in test files", 0) + 1
+        findings.remove(f)
     return findings, {"scanned_paths": scanned, "scanned_files": len(scanned),
-                      "errors": errors, "scanner_errors": len(errors)}
+                      "errors": errors, "scanner_errors": len(errors), "filtered": filtered}
 
 
 def language_scan(engine, files, target, temporary, env, timeout):
@@ -141,13 +164,16 @@ def language_scan(engine, files, target, temporary, env, timeout):
             report["findings"].extend(findings)
             all_scanned.extend(coverage["scanned_paths"])
             errors.extend(coverage["errors"])
+            filtered = report["coverage"].setdefault("filtered", {})
+            for rule, n in coverage["filtered"].items():
+                filtered[rule] = filtered.get(rule, 0) + n
             report["coverage"].update(scanned_paths=all_scanned, scanned_files=len(all_scanned), errors=errors)
             if result.returncode not in ((0, 1) if engine == "bandit" else (0,)):
                 raise ValueError("Scanner process failed; findings are partial")
         missing = sorted(set(files) - set(all_scanned))
         report["coverage"]["missing_paths"] = missing
         if errors or missing:
-            raise ValueError("Scanner could not analyze every selected file; findings are partial")
+            raise ValueError(partial_reason(errors, missing, len(files)))
         report["status"] = "findings" if report["findings"] else "no-findings"
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         report["error"] = str(error) if type(error) is ValueError else type(error).__name__
@@ -253,4 +279,5 @@ def main():
 
 
 if __name__ == "__main__":
+    __import__("_python").ensure()  # Python 3.10+ even when python3 is 3.9
     raise SystemExit(main())

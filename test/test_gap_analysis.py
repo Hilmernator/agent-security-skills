@@ -72,6 +72,30 @@ class Rows(unittest.TestCase):
         with (self.repo / "security/requirements.csv").open() as f:
             return {(r["standard"], r["id"]): r for r in csv.DictReader(f)}
 
+    def test_set_refuses_evidence_outside_the_file_and_writes_nothing(self):
+        # set used to save a row citing a line past the end of the file and only warn.
+        before = (self.repo / "security/requirements.csv").read_text()
+        code, out = run("set", str(self.repo), "asvs:V1.2.1", "--status", "met", "--evidence", "src/app.py:9")
+        self.assertEqual(code, 1)
+        self.assertIn("outside the file", out)
+        self.assertIn("nothing was written", out)
+        self.assertEqual((self.repo / "security/requirements.csv").read_text(), before)
+
+    def test_a_chapter_named_as_the_tally_prints_it_selects_its_rows(self):
+        # check prints AISVS chapters as "C1 ...", and set aisvs:C1 used to match no row.
+        run("init", str(self.repo), "--select", "aisvs:1")
+        code, out = run("set", str(self.repo), "aisvs:C1", "--status", "not-applicable", "--notes", "No training data.")
+        self.assertEqual(code, 0, out)
+        rows = self.rows()
+        self.assertTrue(rows and all(r["status"] == "not-applicable" for k, r in rows.items() if k[0] == "aisvs" and k[1].startswith("1.")))
+
+    def test_show_compact_prints_one_line_per_row(self):
+        code, out = run("show", str(self.repo), "asvs:V1", "--compact")
+        lines = out.strip().splitlines()
+        self.assertTrue(lines)
+        self.assertTrue(all(line.startswith("asvs:V1") and "\t" in line for line in lines))
+        self.assertEqual(len(lines), sum(1 for k in self.rows() if k[1].startswith("V1.")))
+
     def test_init_selects_by_level_and_keeps_rows(self):
         self.assertEqual(len(self.rows()), 70)
         run("set", str(self.repo), "asvs:V1.2.1", "--status", "missing", "--notes", "No encoding.")
@@ -277,13 +301,37 @@ class Coverage(unittest.TestCase):
             status = {r["path"]: r["status"] for r in csv.DictReader(f)}
         self.assertEqual((status["tests/t.py"], status["src/a.py"]), ("test", "internal"))
 
+    def test_a_profile_may_name_boundary_files_by_folder_or_glob(self):
+        # Boundary files used to be listable only one by one in profile.md.
+        (self.repo / "src/routes.py").write_text("@app.get('/a')\ndef a(): pass\n")
+        run("files", str(self.repo), "--mark", ".", "--status", "read")
+        run("inventory", str(self.repo), "--mark", "--path", ".", "--status", "internal", "--notes", "fixture")
+        run("inventory", str(self.repo), "--mark", "--path", "src/routes.py", "--status", "boundary")
+        for named in ("Boundary files: `src/*.py`\n", "Boundary files: everything under `src/`\n"):
+            (self.repo / "security/profile.md").write_text(named)
+            self.assertNotIn("routes.py", self.check()[1], named)
+
+    def test_complete_refuses_a_boundary_file_read_only_in_a_bulk_mark(self):
+        # check --complete used to pass a run that marked whole folders read, boundary files included.
+        for n in range(12):
+            (self.repo / f"src/m{n}.rs").write_text("pub fn f() {}\n")
+        (self.repo / "src/routes.py").write_text("@app.get('/a')\ndef a(): pass\n")
+        run("files", str(self.repo), "--mark", ".", "--status", "read")
+        run("inventory", str(self.repo), "--mark", "--path", ".", "--status", "internal", "--notes", "fixture")
+        run("inventory", str(self.repo), "--mark", "--path", "src/routes.py", "--status", "boundary")
+        (self.repo / "security/profile.md").write_text("Boundary files: src/routes.py\n")
+        out = run("check", str(self.repo), "--complete")[1]
+        self.assertIn("src/routes.py holds boundary lines but was marked read with 15 other files in one mark", out)
+        run("files", str(self.repo), "--mark", "src/routes.py", "--status", "read")  # read on its own
+        self.assertNotIn("in one mark", run("check", str(self.repo), "--complete")[1])
+
     def test_a_boundary_file_the_profile_does_not_name_is_reported_once(self):
         (self.repo / "src/routes.py").write_text("".join(f"@app.get('/r{n}')\ndef r{n}(): pass\n" for n in range(5)))
         run("files", str(self.repo), "--mark", ".", "--status", "read")
         run("inventory", str(self.repo), "--mark", "--path", ".", "--status", "internal", "--notes", "fixture")
         run("inventory", str(self.repo), "--mark", "--path", "src/routes.py", "--status", "boundary")
         out = [line for line in self.check()[1].splitlines() if "routes.py" in line]
-        self.assertEqual(out, ["problem: src/routes.py: 5 boundary lines, but profile.md does not name the file (write its full path)"])
+        self.assertEqual(out, ["problem: src/routes.py: 5 boundary lines, but profile.md does not name the file (its path, a folder ending in / or a glob)"])
 
     def test_evidence_must_be_in_a_read_file(self):
         run("files", str(self.repo), "--mark", ".", "--status", "read")

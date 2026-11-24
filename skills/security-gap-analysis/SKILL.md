@@ -68,7 +68,7 @@ Read the ways in and the outside effects first, then write `security/profile.md`
 
 - **Product**: what it does, who uses it, how it is deployed and reached.
 - **Data**: what it stores and handles, where, and how sensitive each kind is.
-- **Entry points**: every interface that accepts input, including command lines, files the program opens, queues and scheduled events. Every inventory line that is a real boundary must have its file named here.
+- **Entry points**: every interface that accepts input, including command lines, files the program opens, queues and scheduled events. Every inventory line that is a real boundary must have its file named here: by its path, by a folder ending in `/` (`src/routes/`), or by a glob (`src/api/*.py`).
 - **Trust boundaries**: where data crosses from less to more trusted, including from model output into code and from a file into a parser.
 - **Identity**: who authenticates, how, and what authorizes access to each resource. If a networked service has no authentication, write that down; it is a finding, not a reason to skip the chapter.
 - **Access policy**, when the product has more than one kind of caller (anonymous counts as one): who may do what to which resource, as a table local-dast tests the running app against. Format below.
@@ -163,15 +163,17 @@ python3 <skill-dir>/scripts/gap.py files <repo> --mark crates/cli/src/serve.rs -
 python3 <skill-dir>/scripts/gap.py files <repo> --mark docs --status skipped --notes "Documentation, no code."
 ```
 
-Mark a file only after doing what the mark says: the ledger is the coverage claim the user will rely on. The mark records the file's hash; if the file changes, `check` reopens it and the requirement rows that cite it.
+Mark a file only after doing what the mark says: the ledger is the coverage claim the user will rely on. The mark records the file's hash; if the file changes, `check` reopens it and the requirement rows that cite it. A `read` mark that covers more than ten files at once is recorded as a bulk mark: that is fine for plain code, but `check --complete` refuses a file that holds boundary lines until it has been read and marked on its own.
 
-On a large repository, split the unread files into fixed batches by directory (`gap.py files <repo> --list unread`) and, if the host supports subagents, give each batch to one agent with the profile and the selected requirements. Each agent reports the files it read in full, the ones it only skimmed, and evidence or gaps for requirement rows. The parent alone writes the CSVs. A batch that was not finished stays unread.
+On a large repository, split the unread files into fixed batches by directory (`gap.py files <repo> --list unread`) and, if the host supports subagents, give each batch to one agent with the profile and the selected requirements. Start each agent in the foreground and wait for its report: in some hosts a background agent's report never reaches you. Each agent reports the files it read in full, the ones it only skimmed, and evidence or gaps for requirement rows. The parent alone writes the CSVs. A batch that was not finished stays unread.
+
+When the repository is too large to read in full in this session (as a rule of thumb, over about 100,000 lines of the product's own code), say so before starting, and read by risk instead: first every file that holds `boundary` lines, authentication, authorization, sessions, outbound requests, file paths and secrets; then the rest as time allows. Mark what was not read `skimmed` or `skipped` with the reason `not reached: risk-ranked read`, and say in the report which areas that covers. A complete risk-ranked read beats a row-by-row pass that does not finish.
 
 Done when `gap.py files <repo> --list unread` lists no files.
 
 ## 5. Assess, one chapter at a time
 
-List a chapter's open rows with `gap.py show <repo> asvs:V6 --status unassessed`, or one section with `asvs:V6.3`. Read each requirement's whole text: a status set from a text cut short is a guess, so print a chapter at a time and never the whole selection through a filter that shortens lines. For each requirement, find where the control would live, read that code, and decide:
+List a chapter's open rows with `gap.py show <repo> asvs:V6 --status unassessed`, or one section with `asvs:V6.3`; `--compact` prints one line per row to plan the work, and a chapter may be named as `check` prints it (`aisvs:C1`). Read each requirement's whole text: a status set from a text cut short is a guess, so print a chapter at a time and never the whole selection through a filter that shortens lines. For each requirement, find where the control would live, read that code, and decide:
 
 | Status | Meaning | Needs |
 | --- | --- | --- |

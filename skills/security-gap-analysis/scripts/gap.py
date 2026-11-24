@@ -17,6 +17,7 @@ A PATH is a file or a directory; "." is the whole repository.
 import argparse
 import contextlib
 import csv
+import fnmatch
 import datetime
 import hashlib
 import json
@@ -34,6 +35,9 @@ NEEDS_NOTES = set(STATUSES) - {"unassessed", "met"}
 EVIDENCE = re.compile(r"^(?P<path>[^:]+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
 
 FILE_FIELDS = ["path", "lines", "status", "sha", "notes"]
+# A read mark covering more files than this is a bulk mark: fine for plain code, not for a file that holds boundary lines.
+BULK = 10
+BULK_NOTE = re.compile(r"\s*\[bulk:\d+\]")
 FILE_STATUSES = ["unread", "read", "skimmed", "skipped"]
 INV_FIELDS = ["kind", "path", "line", "text", "status", "notes"]
 INV_STATUSES = ["unreviewed", "boundary", "internal", "test"]
@@ -142,6 +146,8 @@ def natural(s):
 def matches(prefix, row):
     standard, _, p = prefix.partition(":")
     i = row["id"]
+    if re.fullmatch(r"C\d+(\.[\d.]+)?", p) and not i.startswith("C"):
+        p = p[1:]  # a chapter as check's tally prints it (AISVS "C1"), for ids that are plain numbers ("1.1.1")
     return row["standard"] == standard and (not p or i == p or i.startswith(p + ".") or i.startswith(p + "-"))
 
 
@@ -200,6 +206,9 @@ def show(args):
     for r in load(args.repo):
         if (not args.prefix or any(matches(p, r) for p in args.prefix)) and (not args.status or r["status"] in args.status):
             req = cats.get(r["standard"], {}).get(r["id"], {})
+            if args.compact:  # one line per row, to work through hundreds of rows (a run had 399 at level 2)
+                print(f'{r["standard"]}:{r["id"]}\t{r["status"]}\t{" ".join(req.get("text", "NOT IN CATALOG").split())[:160]}')
+                continue
             print(f'{r["standard"]}:{r["id"]}\tL{r["level"]}\t{r["status"]}\t{req.get("section", "?")}\n'
                   f'  {req.get("text", "NOT IN CATALOG")}')
             for k in ("evidence", "notes"):
@@ -254,12 +263,16 @@ def set_(args):
         if args.notes is not None:
             r["notes"] = args.notes
         r["assessed"] = rev
-    save(args.repo, rows)
+    # Checked before anything is written, as --from does: a row citing a line past the end of its file was saved with only a warning.
     errors = [e for r in hit for e in problems(Path(args.repo), r, catalogs(), accepted_ids(args.repo))]
-    print(f"{len(hit)} rows set to {args.status}")
     for e in errors:
         print("  problem: " + e)
-    return 1 if errors else 0
+    if errors:
+        print("nothing was written")
+        return 1
+    save(args.repo, rows)
+    print(f"{len(hit)} rows set to {args.status}")
+    return 0
 
 
 def accepted_ids(repo):
@@ -584,8 +597,11 @@ def files(args):
         if not hit:
             sys.exit("no file matches " + " ".join(args.mark))
         for r in hit:
-            r.update(status=args.status, sha=digest(content(repo, r["path"])[0]) if args.status != "unread" else "",
-                     notes=args.notes if args.notes is not None else r["notes"])
+            notes = BULK_NOTE.sub("", args.notes if args.notes is not None else r["notes"]).strip()
+            if args.status == "read" and len(hit) > BULK:
+                # Recorded so check --complete can tell a file read on its own from one swept up with a folder.
+                notes = f"{notes} [bulk:{len(hit)}]".strip()
+            r.update(status=args.status, sha=digest(content(repo, r["path"])[0]) if args.status != "unread" else "", notes=notes)
         write_csv(files_path(repo), FILE_FIELDS, rows)
         print(f"{len(hit)} files marked {args.status}")
     changed = changed_files(repo, rows)
@@ -711,7 +727,19 @@ def inventory(args):
     return 0
 
 
-def coverage_problems(repo, reqs):
+def named_in(path, text):
+    """Whether profile.md names a file: by its path, by a folder it is under (`src/`), or by a glob (`src/*.py`)."""
+    if path in text:
+        return True
+    for token in re.findall(r"[\w.*/-]+", text):
+        if "*" in token and fnmatch.fnmatch(path, token):
+            return True
+        if token.endswith("/") and len(token) > 1 and path.startswith(token):
+            return True
+    return False
+
+
+def coverage_problems(repo, reqs, complete=False):
     """Whether the folder accounts for every file and every boundary signal, and evidence rests on read files."""
     out = []
     frows = read_csv(files_path(repo), FILE_FIELDS)
@@ -753,9 +781,16 @@ def coverage_problems(repo, reqs):
             out.append(f'{where}: status "{r["status"]}" is not one of {", ".join(INV_STATUSES)}')
         elif r["status"] in {"internal", "test"} and not r["notes"].strip():
             out.append(f"{where}: {r['status']} needs notes saying why")
-        elif r["status"] == "boundary" and r["path"] not in named:
+        elif r["status"] == "boundary" and not named_in(r["path"], named):
             unnamed[r["path"]] = unnamed.get(r["path"], 0) + 1
-    out += [f"{p}: {n} boundary lines, but profile.md does not name the file (write its full path)" for p, n in sorted(unnamed.items())]
+    out += [f"{p}: {n} boundary lines, but profile.md does not name the file (its path, a folder ending in / or a glob)" for p, n in sorted(unnamed.items())]
+    if complete:
+        notes = {r["path"]: r["notes"] for r in frows}
+        for p in sorted({r["path"] for r in irows if r["status"] == "boundary"}):
+            bulk = re.search(r"\[bulk:(\d+)\]", notes.get(p, ""))
+            if status.get(p) == "read" and bulk:
+                out.append(f"{p} holds boundary lines but was marked read with {int(bulk[1]) - 1} other files in one mark; "
+                           "read it and mark it on its own (gap.py files --mark <path> --status read)")
     for r in reqs:
         for e in evidence_items(r):
             m = EVIDENCE.match(e)
@@ -821,7 +856,7 @@ def check(args):
         print(f"{standard:6} {chapter[:48]:48} " + "  ".join(f"{s} {counts[s]}" for s in STATUSES if s in counts))
     total = {s: sum(r["status"] == s for r in rows) for s in STATUSES}
     print("total  " + "  ".join(f"{s} {n}" for s, n in total.items() if n))
-    found, ledgers = coverage_problems(repo, rows)
+    found, ledgers = coverage_problems(repo, rows, complete=args.complete)
     errors += found
     for p in sorted((repo / "security").iterdir()):
         if p.name not in SECURITY_FILES and not p.name.startswith("."):
@@ -854,6 +889,7 @@ def main(argv=None):
     p.add_argument("repo")
     p.add_argument("prefix", nargs="*")
     p.add_argument("--status", action="append", choices=STATUSES)
+    p.add_argument("--compact", action="store_true", help="one line per row: id, status, requirement text")
     p = sub.add_parser("set")
     p.add_argument("repo")
     p.add_argument("prefix", nargs="*")

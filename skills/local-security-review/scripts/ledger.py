@@ -262,4 +262,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    __import__("_python").ensure()  # Python 3.10+ even when python3 is 3.9
     sys.exit(main())
