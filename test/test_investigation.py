@@ -129,6 +129,21 @@ class ProveTests(unittest.TestCase):
             self.assertEqual(done.returncode, 2, done.stdout)
         self.assertFalse((self.out / "proofs.json").exists())
 
+    def test_each_attempt_starts_from_the_same_prepared_copy(self):
+        # Both attempts used to run in one copy, so state the first left behind could decide the second.
+        leaky = ("import pathlib\nflag = pathlib.Path('state.flag')\nif flag.exists():\n    raise SystemExit(0)\n"
+                 "flag.write_text('x')\nassert False, 'BOUNDARY role changed'\n")
+        done = self.prove(leaky)
+        self.assertEqual((done.returncode, json.loads(done.stdout)["proven"]), (0, True), done.stderr)
+        self.assertFalse((self.copy / "state.flag").exists())  # the prepared copy itself is never run in
+        record = json.loads((self.out / "proofs.json").read_text())["SAST-0003"]
+        self.assertEqual(record["isolation"], "fresh copy of the prepared copy for each attempt")
+        self.assertEqual(self.prove(leaky, "--same-copy").returncode, 2)  # running in place needs the reset written down
+        same = self.prove(leaky, "--same-copy", "--reset", "the test removes state.flag in its teardown")
+        self.assertFalse(json.loads(same.stdout)["proven"])  # it does not, so the second attempt passed
+        self.assertEqual(json.loads((self.out / "proofs.json").read_text())["SAST-0003"]["isolation"],
+                         "same copy; reset: the test removes state.flag in its teardown")
+
     def test_a_failing_assertion_proves_and_a_crash_does_not(self):
         crash = self.prove("raise RuntimeError('fixture missing')\nassert False, 'BOUNDARY role changed'\n")
         self.assertEqual((crash.returncode, json.loads(crash.stdout)["proven"]), (1, False))

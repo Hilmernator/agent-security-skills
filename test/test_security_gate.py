@@ -147,6 +147,44 @@ class Gate(unittest.TestCase):
 
     # 2: installs
 
+    def test_a_private_registry_from_configuration_skips_the_public_lookup(self):
+        # Only flags on the command line used to count, so an internal name set up through .npmrc, pip.conf or the
+        # environment was sent to the public registry, and a real internal package could be denied.
+        home = Path(tempfile.mkdtemp())
+        with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
+            for var in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_INDEX_URL", "UV_DEFAULT_INDEX", "UV_INDEX", "UV_EXTRA_INDEX_URL",
+                        "npm_config_registry", "NPM_CONFIG_REGISTRY", "PIP_CONFIG_FILE"):
+                os.environ.pop(var, None)
+            (self.repo / ".npmrc").write_text("registry=https://npm.corp.example/\n")
+            with patch.object(gate, "lookup") as lookup:
+                out = self.hook("PreToolUse", tool_name="Bash", tool_input={"command": "npm install acme-internal"})
+            lookup.assert_not_called()
+            self.assertIn("not looked up", out["systemMessage"])
+            self.assertIn(".npmrc", out["systemMessage"])
+            self.assertNotIn("acme-internal", out["systemMessage"])
+            (self.repo / ".npmrc").write_text("registry=https://registry.npmjs.org/\n")  # the public registry spelled out
+            self.assertEqual(self.bash("npm install left-pad", {})[1], [("npm", "left-pad")])
+            (self.repo / ".npmrc").unlink()
+
+            def looked_up(command):
+                with patch.object(gate, "lookup", return_value=OLD) as lookup:
+                    self.hook("PreToolUse", tool_name="Bash", tool_input={"command": command})
+                return [c.args for c in lookup.call_args_list]
+            (home / ".config/pip").mkdir(parents=True)
+            (home / ".config/pip/pip.conf").write_text("[global]\nindex-url = https://pypi.corp.example/simple\n")
+            self.assertEqual(looked_up("pip install acme-internal"), [])
+            (home / ".config/pip/pip.conf").unlink()
+            with patch.dict(os.environ, {"UV_INDEX_URL": "https://pypi.corp.example/simple"}):
+                self.assertEqual(looked_up("uv add acme-internal"), [])
+            self.assertEqual(looked_up("uv add requests"), [("pypi", "requests")])
+
+    def test_an_internal_error_says_the_call_was_not_checked(self):
+        with patch.object(gate, "pre_bash", side_effect=KeyError("secret-value")):
+            out = self.hook("PreToolUse", tool_name="Bash", tool_input={"command": "pip install x"})
+        self.assertIn("not checked", out["systemMessage"])
+        self.assertIn("KeyError", out["systemMessage"])
+        self.assertNotIn("secret-value", out["systemMessage"])
+
     def test_missing_package_is_denied_and_only_names_are_looked_up(self):
         (decision, reason), calls = self.bash("cd app && pip install requests reqeusts-toolbelt==1.0", {"reqeusts-toolbelt": "missing"})
         self.assertEqual(decision, "deny")
@@ -239,12 +277,15 @@ class Gate(unittest.TestCase):
 
     # failing open, and the off switch
 
-    def test_off_switch_and_bad_input_print_nothing(self):
+    def test_off_switch_is_silent_and_bad_input_only_says_it_was_not_checked(self):
         with patch.dict(os.environ, {"AGENT_TOOLS_SECURITY_GATE": "off"}):
             self.assertIsNone(self.write(".github/workflows/ci.yml", "x"))
         for stdin in ("not json", "{}", '{"hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_input": null}'):
             run = subprocess.run([sys.executable, str(SCRIPT)], input=stdin, capture_output=True, text=True, timeout=30)
-            self.assertEqual((run.returncode, run.stdout, run.stderr), (0, "", ""))
+            self.assertEqual((run.returncode, run.stderr), (0, ""))
+            if run.stdout:  # never a decision, only the note that the call went unchecked
+                self.assertEqual(list(json.loads(run.stdout)), ["systemMessage"])
+                self.assertIn("was not checked", run.stdout)
 
     def test_script_runs_as_a_hook(self):
         event = {"hook_event_name": "PreToolUse", "session_id": self.session, "cwd": str(self.repo), "tool_name": "Write",

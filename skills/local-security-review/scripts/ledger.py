@@ -122,7 +122,33 @@ def review_items(repo, doc):
     return items
 
 
-def dast_items(doc, assessments, repo=None):
+def reproduction_problem(a, doc, report):
+    """`confirmed` for a local-dast candidate: shown by a test, and failed again in a second run whose report is named.
+
+    `reproduced_in` is that run's report.json, relative to this report's folder. It must be another run, and it must show the
+    same failed case, or for a ZAP candidate the same alert. Exits with the reason otherwise."""
+    if a.get("basis") != "test":
+        sys.exit(f"{a['id']}: confirmed needs basis test (a case that failed in two runs); with less evidence use likely")
+    where = a.get("reproduced_in")
+    if not isinstance(where, str) or not where.strip() or report is None:
+        sys.exit(f"{a['id']}: confirmed needs reproduced_in, the report.json of the second run from reset fixtures")
+    other = (Path(report).resolve().parent / where).resolve()
+    if other == Path(report).resolve():
+        sys.exit(f"{a['id']}: reproduced_in names this run; it must be the second run")
+    try:
+        second = json.loads(other.read_text())
+    except (OSError, ValueError):
+        sys.exit(f"{a['id']}: reproduced_in {where} is not a readable report.json")
+    zap = {f["id"]: f.get("alert_ref") for f in doc.get("findings", [])}
+    if a["id"] in zap:
+        shown = zap[a["id"]] in {f.get("alert_ref") for f in second.get("findings", [])}
+    else:
+        shown = any(c.get("id") == a["id"] and c.get("state") == "assertion-failed" for c in second.get("cases", []))
+    if not shown:
+        sys.exit(f"{a['id']}: the run in {where} does not show it again (the case did not fail there, or the alert is absent)")
+
+
+def dast_items(doc, assessments, repo=None, report=None):
     """Candidates of local-dast: ZAP alerts and failed cases, keyed by rule and case labels, or by a root cause the agent names.
 
     An assessment may add `finding` (a short label of the root cause) and `path` (the repository file where it is). Cases with one
@@ -142,6 +168,8 @@ def dast_items(doc, assessments, repo=None):
             continue
         if a.get("disposition") not in STATUSES or a.get("basis") not in BASES[:3] or not str(a.get("note") or "").strip():
             sys.exit(f"{a['id']}: needs a disposition in {STATUSES}, a basis in {BASES[:3]} and a note")
+        if a["disposition"] == "confirmed":
+            reproduction_problem(a, doc, report)
         items[a["id"]].update(status=a["disposition"], basis=a["basis"], note=a["note"])
         if "finding" in a or "path" in a:
             label, where = a.get("finding"), a.get("path", "")
@@ -180,7 +208,7 @@ def record(args):
         # ponytail: local-dast rows are never pruned, because a run sends only the cases of its plan.
         # Ceiling: a row outlives a case that was removed. Way up: a `drop <fingerprint>` command.
         skill, full = "local-dast", False
-        items = dast_items(doc, json.loads(Path(args.assessments).read_text()), repo)
+        items = dast_items(doc, json.loads(Path(args.assessments).read_text()), repo, Path(args.file))
     else:
         sys.exit(f"{args.file} is neither a review.json of render_review.py nor a report.json of dast.py")
 

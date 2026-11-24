@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a finding's proof test twice in a temporary copy and record the outcome in proofs.json.
+"""Run a finding's proof test twice, each time in a fresh copy of the prepared copy, and record the outcome in proofs.json.
 
 The agent writes the test; this script decides whether it proves anything. A proof counts only when both
 runs fail and both outputs contain the marker, a text that appears in the test's assertion message and
@@ -12,7 +12,9 @@ import argparse
 import datetime
 import json
 from pathlib import Path
+import shutil
 import subprocess
+import tempfile
 import sys
 
 from render_review import proven, write_private
@@ -30,6 +32,9 @@ def main(argv=None):
     parser.add_argument("--test", required=True, help="the proof test, relative to the copy")
     parser.add_argument("--expect", required=True, help="marker from the test's assertion message")
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--same-copy", action="store_true",
+                        help="run both attempts in the copy itself instead of a fresh copy each (for a copy too large to duplicate)")
+    parser.add_argument("--reset", help="with --same-copy: how the state of the first attempt is undone before the second")
     argv = sys.argv[1:] if argv is None else list(argv)
     split = argv.index("--") if "--" in argv else len(argv)
     args, command = parser.parse_args(argv[:split]), argv[split + 1:]
@@ -44,16 +49,25 @@ def main(argv=None):
         parser.error("--test must name a file inside the copy")
     if not args.expect.strip() or args.expect not in test.read_text(errors="replace") or any(args.expect in part for part in command):
         parser.error("--expect must appear in the test file and not in the command")
+    if args.same_copy and not (args.reset or "").strip():
+        parser.error("--same-copy needs --reset saying how the first attempt's state is undone")
 
     runs = []
     for _ in range(2):
-        try:
-            done = subprocess.run(command, cwd=copy, capture_output=True, text=True, errors="replace",
-                                  stdin=subprocess.DEVNULL, timeout=args.timeout)
-            runs.append({"exit": done.returncode, "marker": args.expect in done.stdout + done.stderr})
-        except subprocess.TimeoutExpired:
-            runs.append({"exit": None, "marker": False})
-    record = {"test": args.test, "command": command, "expect": args.expect, "runs": runs,
+        # Each attempt starts from the prepared copy, so nothing the first attempt left (files, a database) decides the second.
+        with tempfile.TemporaryDirectory() as scratch:
+            where = copy if args.same_copy else Path(scratch) / "attempt"
+            if not args.same_copy:
+                shutil.copytree(copy, where, symlinks=True)
+            argv = [part.replace(str(copy), str(where)) for part in command]
+            try:
+                done = subprocess.run(argv, cwd=where, capture_output=True, text=True, errors="replace",
+                                      stdin=subprocess.DEVNULL, timeout=args.timeout)
+                runs.append({"exit": done.returncode, "marker": args.expect in done.stdout + done.stderr})
+            except subprocess.TimeoutExpired:
+                runs.append({"exit": None, "marker": False})
+    isolation = f"same copy; reset: {args.reset.strip()}" if args.same_copy else "fresh copy of the prepared copy for each attempt"
+    record = {"test": args.test, "command": command, "expect": args.expect, "runs": runs, "isolation": isolation,
               "date": datetime.date.today().isoformat(), "source": test.read_text(errors="replace")}
     path = args.report.parent / "proofs.json"
     proofs = json.loads(path.read_text()) if path.is_file() else {}

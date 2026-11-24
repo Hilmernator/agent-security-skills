@@ -71,5 +71,19 @@ class IncompleteReason(unittest.TestCase):
         self.assertIn("findings for the other files are kept", message)
 
 
+class RulePacks(unittest.TestCase):
+    """Semgrep's packs come from URLs whose content changes, so a report must say which rules it ran."""
+
+    def test_the_identity_of_the_installed_packs_is_their_recorded_hashes(self):
+        import json
+        import tempfile
+        import setup_sast
+        folder = Path(tempfile.mkdtemp())
+        (folder / "manifest.json").write_text(json.dumps({"source": "https://x", "fetched_at": "2026-11-24T10:00:00+00:00",
+                                                          "packs": {"p/python": {"sha256": "ab" * 32, "bytes": 10}}}))
+        with mock.patch.object(setup_sast, "RULES_DIR", folder):
+            self.assertEqual(setup_sast.rule_pack_identity(), {"fetched_at": "2026-11-24T10:00:00+00:00", "packs": {"p/python": "ab" * 32}})
+
+
 if __name__ == "__main__":
     unittest.main()

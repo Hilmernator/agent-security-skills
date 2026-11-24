@@ -21,9 +21,9 @@ Also in the bundle, written by others: [Other security skills I use](#other-secu
 
 ## local-security-review
 
-Use it to scan and review a repository, a diff, a commit or a release. The agent prepares the scanners with one command (`security.py --setup`): Semgrep, Bandit, ESLint, Trivy for infrastructure as code, bundled Rust rules, OSV advisories for npm, PyPI and crates.io, and Gitleaks for secrets in files and in local Git history. It then maps the target, investigates every finding for reachability and impact, hunts for what scanners miss, and returns a fix plan. A finding is `confirmed` only when `prove.py` ran a proof test twice in a temporary copy and both runs failed on the current code; `render_review.py` refuses `confirmed` without that run. Say "fix it" afterwards to apply the plan; the proof tests stay as regression tests.
+Use it to scan and review a repository, a diff, a commit or a release. The agent prepares the scanners with one command (`security.py --setup`): Semgrep, Bandit, ESLint, Trivy for infrastructure as code, bundled Rust rules, OSV advisories for npm, PyPI and crates.io, and Gitleaks for secrets in files and in local Git history. It then maps the target, investigates every finding for reachability and impact, hunts for what scanners miss, and returns a fix plan. A finding is `confirmed` only when `prove.py` ran a proof test twice, each time in a fresh copy of the prepared copy, and both runs failed on the current code; `render_review.py` refuses `confirmed` without that run. Say "fix it" afterwards to apply the plan; the proof tests stay as regression tests.
 
-The default scope is the full repository. `diff`, `commit [SHA]` and `release` narrow or widen it. It needs Python 3.10+, and Node for ESLint; setup supports macOS and Linux. Scanner binaries, rule packs and advisory databases are downloaded at setup, checked against pinned hashes, and never committed; read [the licensing boundaries](skills/local-security-review/references/licensing.md) first.
+The default scope is the full repository. `diff`, `commit [SHA]` and `release` narrow or widen it. It needs Python 3.10+, and Node for ESLint; setup supports macOS and Linux. Scanner binaries and the locked Python and npm packages are downloaded at setup and checked against hashes pinned in this repository. Semgrep's rule packs come from URLs whose content changes: their hashes are recorded at download, checked before every scan and written into each report (`rule_packs`), so two installations fetched at different times can run different rules. Advisory databases are downloaded at setup too. Nothing downloaded is committed; read [the licensing boundaries](skills/local-security-review/references/licensing.md) first.
 
 ## security-gap-analysis
 
@@ -45,7 +45,7 @@ Coding agents tend to weaken the checks they can see and to install packages tha
 - Before a command that installs named packages with pip, uv, poetry, npm, pnpm, yarn or bun, it looks each name up on PyPI or npm. It refuses a name that does not exist and asks about one first published less than 30 days ago. Only the package name is sent.
 - When the session stops, it blocks the stop once if the session edited a file that has a `confirmed` row in `security/findings.csv`, and asks the agent to run that finding's proof again.
 
-Any error in the gate lets the tool run. `AGENT_TOOLS_SECURITY_GATE=off` turns it off.
+When a package manager is set up for a private registry (in `.npmrc`, `.yarnrc.yml`, `pip.conf`, `uv.toml`, `pyproject.toml` or the matching environment variables), no name is sent to the public registry and the gate says it skipped the lookup. Any error in the gate lets the tool run, and the gate says that call was not checked, naming only the kind of error. `AGENT_TOOLS_SECURITY_GATE=off` turns it off.
 
 ## Other security skills I use
 

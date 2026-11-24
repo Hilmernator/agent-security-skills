@@ -492,6 +492,32 @@ class Design(unittest.TestCase):
         gaps.write_text("# Gaps\n\n## 1. Keys are shared\n\n- I3\n\n## Check outside the code\n\nNothing.\n")
         self.assertNotIn("invariant", run("check", str(self.repo), "--complete")[1])
 
+    def test_a_probe_never_edits_a_file_outside_the_copy(self):
+        # An absolute path, a path that climbs out with .., or a link inside the copy that points out must all be refused
+        # before any file changes, for one probe and for a batch.
+        self.profile.write_text("# Profile\n" + INVARIANTS)
+        copy = Path(tempfile.mkdtemp()) / "copy"
+        shutil.copytree(self.repo, copy, ignore=shutil.ignore_patterns("security", ".git"))
+        outside = Path(tempfile.mkdtemp()) / "victim.py"
+        outside.write_text("    if user != 'owner':\n")
+        (copy / "src/linked.py").symlink_to(outside)
+        before = {f: f.read_text() for f in (outside, self.repo / "src/app.py", copy / "src/app.py")}
+        cmd = ["--", sys.executable, "-c", "pass"]
+        for rel in (str(outside), "../" + "../" * len(copy.parts) + str(outside).lstrip("/"), str(self.repo / "src/app.py"), "src/linked.py"):
+            code, out = run("probe", str(self.repo), "I1", "--copy", str(copy), "--file", rel, "--old", "    if user != 'owner':", "--new", "    if False:", *cmd)
+            self.assertEqual(code, 1, rel)
+            self.assertIn("is not a file inside the copy", out, rel)
+        batch = Path(tempfile.mkdtemp()) / "probes.csv"
+        with batch.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "file", "old", "new"])
+            w.writerow(["I1", "src/app.py", "    if user != 'owner':", "    if False:"])
+            w.writerow(["I1", "src/linked.py", "    if user != 'owner':", "    if False:"])
+        code, out = run("probe", str(self.repo), "--batch", str(batch), "--copy", str(copy), *cmd)
+        self.assertEqual(code, 1)
+        self.assertIn("line 3: src/linked.py is not a file inside the copy", out)
+        self.assertEqual({f: f.read_text() for f in before}, before)
+
     def test_a_batch_of_probes_runs_the_baseline_once(self):
         self.profile.write_text("# Profile\n" + INVARIANTS)
         copy = Path(tempfile.mkdtemp()) / "copy"

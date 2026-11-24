@@ -221,6 +221,8 @@ def execute(args):
                     allowed = False
             if allowed:
                 path, semgrep = scan.execute(semgrep_args)
+                if not args.semgrep_config:
+                    semgrep["rule_packs"] = setup_sast.rule_pack_identity()
                 # Keep projected results in the aggregate, not extra report trees.
                 path.unlink()
                 path.parent.rmdir()

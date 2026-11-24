@@ -132,12 +132,15 @@ class Ledger(unittest.TestCase):
         report = {"cases": [{"id": "anonymous-health", "state": "pass"}, {"id": "peer-cannot-read", "state": "assertion-failed"}],
                   "zap": {"status": "complete"}, "findings": [{"id": "DAST-0001", "alert_ref": "10038-1", "observed_cases": list(observed)}]}
         (self.out / "report.json").write_text(json.dumps(report))
+        (self.out / "repro").mkdir(exist_ok=True)
+        (self.out / "repro/report.json").write_text(json.dumps(report))  # the second run, from reset fixtures
         (self.out / "assessments.json").write_text(json.dumps(assessments))
         return run("record", self.repo, self.out / "report.json", "--assessments", self.out / "assessments.json")[1]
 
     def test_dast_candidates_share_the_file_and_keep_their_own_rows(self):
         self.review((finding("SAST-0001", 2), LIKELY))
-        confirmed = {"id": "peer-cannot-read", "disposition": "confirmed", "basis": "test", "note": "The peer read the owner's document."}
+        confirmed = {"id": "peer-cannot-read", "disposition": "confirmed", "basis": "test", "note": "The peer read the owner's document.",
+                     "reproduced_in": "repro/report.json"}
         self.assertIn("peer-cannot-read", self.dast([confirmed]))
         out = self.dast([confirmed, {"id": "DAST-0001", "disposition": "false-positive", "basis": "code", "note": "Header is set by the proxy."}])
         self.assertIn("seen before: confirmed, basis test", out)
@@ -153,11 +156,29 @@ class Ledger(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.dast(bad)
 
+    def test_confirmed_needs_a_test_basis_and_a_reproduction_that_failed_the_same_case(self):
+        # The ledger used to accept `confirmed` with basis `assumed`, and with no second run at all.
+        confirmed = {"id": "peer-cannot-read", "disposition": "confirmed", "basis": "test", "note": "The peer read the owner's document.",
+                     "reproduced_in": "repro/report.json"}
+        self.assertIn("peer-cannot-read", self.dast([confirmed]))
+        passed = {"cases": [{"id": "peer-cannot-read", "state": "pass"}], "zap": {"status": "complete"}, "findings": []}
+        for bad, why in (({**confirmed, "basis": "assumed"}, "basis"), ({k: v for k, v in confirmed.items() if k != "reproduced_in"}, "reproduced_in"),
+                         ({**confirmed, "reproduced_in": "report.json"}, "same run"), ({**confirmed, "reproduced_in": "repro/missing.json"}, "missing")):
+            with self.subTest(why=why), self.assertRaises(SystemExit):
+                self.dast([bad])
+        self.dast([confirmed])
+        (self.out / "repro/report.json").write_text(json.dumps(passed))  # the second run did not fail that case
+        (self.out / "assessments.json").write_text(json.dumps([confirmed]))
+        with self.assertRaises(SystemExit):
+            run("record", self.repo, self.out / "report.json", "--assessments", self.out / "assessments.json")
+
     def test_cases_of_one_root_cause_are_one_row_at_their_place_in_the_code(self):
         report = {"cases": [{"id": "peer-writes", "state": "assertion-failed"}, {"id": "owner-rereads", "state": "assertion-failed"},
                             {"id": "peer-lists", "state": "assertion-failed"}], "zap": {"status": "complete"}, "findings": []}
         (self.out / "report.json").write_text(json.dumps(report))
-        same = {"finding": "comment-edit-without-ownership", "path": "app.py"}
+        (self.out / "repro").mkdir(exist_ok=True)
+        (self.out / "repro/report.json").write_text(json.dumps(report))
+        same = {"finding": "comment-edit-without-ownership", "path": "app.py", "reproduced_in": "repro/report.json"}
         verdicts = [{"id": "peer-writes", "disposition": "confirmed", "basis": "test", "note": "A peer changed the owner's comment.", **same},
                     {"id": "owner-rereads", "disposition": "confirmed", "basis": "test", "note": "The owner's re-read shows the change.", **same},
                     {"id": "peer-lists", "disposition": "likely", "basis": "code", "note": "The list has no tenant filter."}]

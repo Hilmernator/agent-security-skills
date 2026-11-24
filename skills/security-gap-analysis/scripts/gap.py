@@ -438,6 +438,14 @@ def controls(args):
     return 0
 
 
+def inside(copy, rel):
+    """The file rel names in the copy, resolved through links, or None when it is absolute or resolves outside the copy."""
+    if Path(rel).is_absolute():
+        return None
+    target = (copy / rel).resolve()
+    return target if target.is_relative_to(copy) and target != copy else None
+
+
 def probe(args):
     """Switch controls off in a copy, one at a time, run the tests, put each file back, and write what happened into each invariant's Test cell.
 
@@ -468,8 +476,10 @@ def probe(args):
     else:
         for n, ident, rel, old, _ in jobs:
             where = f"line {n}: " if n else ""
-            target = copy / rel
-            if ident not in known:
+            target = inside(copy, rel)
+            if target is None:
+                problems_found.append(f"{where}{rel} is not a file inside the copy")
+            elif ident not in known:
                 problems_found.append(f"{where}profile.md Security invariants has no row {ident}")
             elif not target.is_file() or target.read_text().count(old) != 1:
                 problems_found.append(f"{where}--old must occur exactly once in {rel} of the copy")
@@ -488,7 +498,7 @@ def probe(args):
         return 1
     failed = 0
     for _, ident, rel, old, new in jobs:
-        target = copy / rel
+        target = inside(copy, rel)  # checked above; resolved again so the file written is the file checked
         original = target.read_text()
         try:
             target.write_text(original.replace(old, new))

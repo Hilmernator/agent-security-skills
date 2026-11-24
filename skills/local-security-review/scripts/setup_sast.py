@@ -118,6 +118,13 @@ def node_supported(version):
     return major >= 24 or (major == 22 and (minor, patch) >= (13, 0)) or (major == 20 and (minor, patch) >= (19, 0))
 
 
+def rule_pack_identity():
+    """Which rules a scan ran: the download time and each pack's recorded sha256. The packs come from URLs whose content
+    changes, so two installations fetched at different times can differ; a report carries this to show it."""
+    manifest = json.loads((RULES_DIR / "manifest.json").read_text())
+    return {"fetched_at": manifest["fetched_at"], "packs": {name: pack["sha256"] for name, pack in manifest["packs"].items()}}
+
+
 def rules_status():
     """Installed packs must match the policy list and the hashes recorded at download."""
     policy = json.loads(RULE_POLICY.read_text())

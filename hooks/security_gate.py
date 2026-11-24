@@ -218,11 +218,56 @@ def lookup(eco, name):
         return None
 
 
+PUBLIC = re.compile(r"^https?://(registry\.npmjs\.org|registry\.yarnpkg\.com|pypi\.org|files\.pythonhosted\.org)(/|$)", re.I)
+REGISTRY_ENV = {"npm": ("npm_config_registry", "NPM_CONFIG_REGISTRY", "YARN_NPM_REGISTRY_SERVER"),
+                "pypi": ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_INDEX_URL", "UV_DEFAULT_INDEX", "UV_INDEX", "UV_EXTRA_INDEX_URL")}
+REGISTRY_LINE = {"npm": re.compile(r"^\s*(?:@[\w.-]+:)?registry\s*=\s*(\S+)|^\s*npmRegistryServer\s*:\s*[\"']?([^\"'\s]+)", re.M),
+                 "pypi": re.compile(r"^\s*(?:extra-)?index-url\s*=\s*(\S+)|^\s*url\s*=\s*[\"']([^\"']+)", re.M)}
+
+
+def private_registry(eco, cwd):
+    """Where a registry other than the public one is set up for this ecosystem (a file name or a variable name), or None.
+
+    The package manager reads this configuration itself, so a name it resolves privately must not be sent to the public
+    registry. Only names are returned, never values."""
+    for var in REGISTRY_ENV[eco]:
+        value = os.environ.get(var, "")
+        if value and not all(PUBLIC.match(v) for v in value.split()):
+            return var
+    home = Path.home()
+    folders = [cwd, *cwd.parents] if cwd else []
+    if eco == "npm":
+        files = [f / name for f in folders for name in (".npmrc", ".yarnrc.yml")] + [home / ".npmrc", home / ".yarnrc.yml"]
+    else:
+        files = ([Path(os.environ["PIP_CONFIG_FILE"])] if os.environ.get("PIP_CONFIG_FILE") else []) + \
+                [home / ".config/pip/pip.conf", home / ".pip/pip.conf", home / "Library/Application Support/pip/pip.conf",
+                 Path("/etc/pip.conf")] + [f / name for f in folders for name in ("pip.conf", "uv.toml", "pyproject.toml", "poetry.toml")]
+    for f in files:
+        try:
+            text = f.read_text(errors="replace") if f.is_file() and f.stat().st_size < 1_000_000 else ""
+        except OSError:
+            continue
+        if eco == "pypi" and f.name == "pyproject.toml" and not re.search(r"\[\[tool\.(uv\.index|poetry\.source)\]\]|\[tool\.uv\][^\[]*index", text):
+            continue
+        for m in REGISTRY_LINE[eco].finditer(text):
+            url = next(g for g in m.groups() if g)
+            if not PUBLIC.match(url):
+                return f.name
+    return None
+
+
 def pre_bash(event):
     wanted = sorted({(eco, n) for eco, args in installs((event.get("tool_input") or {}).get("command") or "")
                      for n in names(eco, args)})
     if not wanted:
         return None
+    cwd = Path(event["cwd"]) if event.get("cwd") else None
+    private = {eco: private_registry(eco, cwd) for eco in {e for e, _ in wanted}}
+    skipped = {eco: where for eco, where in private.items() if where}
+    wanted = [(e, n) for e, n in wanted if e not in skipped]
+    if not wanted:
+        return {"systemMessage": "security gate: package names were not looked up on the public registry, because a private "
+                "registry is configured (" + ", ".join(f"{REGISTRY[e]}: {w}" for e, w in sorted(skipped.items())) + ")"}
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
         found = list(zip(wanted, pool.map(lambda w: lookup(*w), wanted)))
     missing = [f"{n} ({REGISTRY[e]})" for (e, n), v in found if v == "missing"]
@@ -295,8 +340,9 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
             out = stop(event)
         if out:
             stdout.write(json.dumps(out))
-    except Exception:
-        pass
+    except Exception as error:
+        # The tool call goes ahead, as it always has; say so, with the error's type only (no command, content or names).
+        stdout.write(json.dumps({"systemMessage": f"security gate: this call was not checked ({type(error).__name__} inside the gate)"}))
     return 0
 
 
