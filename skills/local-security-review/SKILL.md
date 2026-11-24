@@ -17,7 +17,8 @@ Almost all the cost of a review is the conversation being read again on every tu
 
 - Read line ranges, not whole files: the function you assess and its callers, from `grep -n` hits, about 80 lines at a time. Send independent reads and greps in one turn.
 - Give reading to subagents when the work is large (more than about 30 candidates, more than about 20 entrypoints, or a repository you cannot read in full). Start each in the foreground with a mid-tier model (`model: sonnet` in Claude Code), give it `context.md`, its slice of the work and the reference it needs, and ask for JSON back: per candidate the ID or a new `AGENT-` title, `path:line` of the evidence, one sentence of reasoning and a suggested disposition. A subagent may also write a proof test and run `prove.py`; `prove.py` itself decides whether it proves anything.
-- Judge what comes back yourself: read only the cited lines, decide the disposition, and keep the attack reasoning, the severity and the final word with you. A subagent's claim is a lead, not a verdict.
+- Split the Entrypoints list so every line is in some slice, and ask each subagent to return every entrypoint of its slice as `walked` or `not walked`, with who may call it. Entrypoints no slice covered, or that come back `not walked`, are yours to walk.
+- Judge what comes back yourself: read only the cited lines, decide the disposition, and keep the attack reasoning, the severity and the final word with you. A subagent's claim is a lead, not a verdict. Assess every lead, low confidence included: drop one only after reading its lines, and record what you cannot settle as `needs-review`, not nothing.
 
 The Boundaries at the end hold for every step.
 
