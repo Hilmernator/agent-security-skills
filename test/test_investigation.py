@@ -147,6 +147,7 @@ class ProveTests(unittest.TestCase):
     def test_a_failing_assertion_proves_and_a_crash_does_not(self):
         crash = self.prove("raise RuntimeError('fixture missing')\nassert False, 'BOUNDARY role changed'\n")
         self.assertEqual((crash.returncode, json.loads(crash.stdout)["proven"]), (1, False))
+        self.assertIn("RuntimeError: fixture missing", crash.stderr)  # without the output the agent cannot tell why
         proof = self.prove("role = 'admin'\nassert role == 'user', 'BOUNDARY role changed'\n")
         self.assertEqual((proof.returncode, json.loads(proof.stdout)["proven"]), (0, True), proof.stderr)
         proofs = json.loads((self.out / "proofs.json").read_text())

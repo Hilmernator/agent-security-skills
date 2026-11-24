@@ -112,6 +112,11 @@ class Candidates(unittest.TestCase):
         one = subprocess.run([sys.executable, str(SCRIPTS / "candidates.py"), str(out / "report.json"), "--rule",
                               "eslint.detect-object-injection", "--all"], capture_output=True, text=True).stdout
         self.assertEqual(one.count("web/src/"), 40)
+        many = [{**findings[0], "id": f"SAST-{n}", "line": n} for n in range(20000)]  # more than a pipe buffer holds
+        (out / "big.json").write_text(json.dumps({"findings": many}))
+        piped = subprocess.run(f"{sys.executable} {SCRIPTS / 'candidates.py'} {out / 'big.json'} --all | head -1",
+                               shell=True, capture_output=True, text=True)
+        self.assertNotIn("Traceback", piped.stderr)  # a reader that stops early is not an error
 
 
 if __name__ == "__main__":

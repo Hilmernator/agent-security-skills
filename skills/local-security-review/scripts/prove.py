@@ -64,8 +64,14 @@ def main(argv=None):
                 done = subprocess.run(argv, cwd=where, capture_output=True, text=True, errors="replace",
                                       stdin=subprocess.DEVNULL, timeout=args.timeout)
                 runs.append({"exit": done.returncode, "marker": args.expect in done.stdout + done.stderr})
+                if not (done.returncode and runs[-1]["marker"]):
+                    # Say why this attempt proves nothing: the end of the test's own output (to stderr, not into proofs.json).
+                    tail = (done.stdout + done.stderr).strip().splitlines()[-30:]
+                    print(f"attempt {len(runs)}: exit {done.returncode}, marker {'found' if runs[-1]['marker'] else 'absent'}; "
+                          "end of output:\n" + "\n".join(tail), file=sys.stderr)
             except subprocess.TimeoutExpired:
                 runs.append({"exit": None, "marker": False})
+                print(f"attempt {len(runs)}: no result within {args.timeout} s", file=sys.stderr)
     isolation = f"same copy; reset: {args.reset.strip()}" if args.same_copy else "fresh copy of the prepared copy for each attempt"
     record = {"test": args.test, "command": command, "expect": args.expect, "runs": runs, "isolation": isolation,
               "date": datetime.date.today().isoformat(), "source": test.read_text(errors="replace")}
