@@ -85,5 +85,34 @@ class RulePacks(unittest.TestCase):
             self.assertEqual(setup_sast.rule_pack_identity(), {"fetched_at": "2026-11-24T10:00:00+00:00", "packs": {"p/python": "ab" * 32}})
 
 
+class Candidates(unittest.TestCase):
+    """Reading report.json whole put tens of thousands of characters into the reviewer's context; a grouped list does not."""
+
+    def test_candidates_are_grouped_by_rule_with_counts_and_a_few_places(self):
+        import json
+        import subprocess
+        import tempfile
+        out = Path(tempfile.mkdtemp())
+        findings = [{"id": f"SAST-{n:04}", "rule": "eslint.detect-object-injection", "path": f"web/src/m{n}.ts", "line": n,
+                     "scanner_severity": "WARNING"} for n in range(1, 41)]
+        findings += [{"id": "SAST-0041", "rule": "python.sqli", "path": "api/views.py", "line": 7, "scanner_severity": "ERROR"},
+                     {"id": "SCA-0001", "rule": "GHSA-xxxx", "path": "poetry.lock", "line": 12, "scanner_severity": "HIGH",
+                      "metadata": {"package": "pyjwt"}}]
+        (out / "report.json").write_text(json.dumps({"findings": findings}))
+        done = subprocess.run([sys.executable, str(SCRIPTS / "candidates.py"), str(out / "report.json")], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        text = done.stdout
+        self.assertLess(len(text), 2000)
+        self.assertIn("python.sqli  1  ERROR", text)
+        self.assertIn("eslint.detect-object-injection  40  WARNING", text)
+        self.assertIn("SAST-0041 api/views.py:7", text)
+        self.assertEqual(text.count("web/src/"), 5)  # five places shown for a big group, the rest counted
+        self.assertIn("and 35 more", text)
+        self.assertLess(text.index("python.sqli"), text.index("detect-object-injection"))  # most severe first
+        one = subprocess.run([sys.executable, str(SCRIPTS / "candidates.py"), str(out / "report.json"), "--rule",
+                              "eslint.detect-object-injection", "--all"], capture_output=True, text=True).stdout
+        self.assertEqual(one.count("web/src/"), 40)
+
+
 if __name__ == "__main__":
     unittest.main()

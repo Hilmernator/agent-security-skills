@@ -11,6 +11,14 @@ Every finding is reported in one of three tiers. `confirmed`: a proof test faile
 
 Call scripts by absolute path (`<skill-dir>/scripts/...`), never from the target repository and without `cd`. Scripts need Python 3.10+; run them with `python3` all the same: when it is older, each script hands over to a newer interpreter on PATH or found by `uv` by itself. Only if `--check` still reports `python: incompatible` is none installed. Report directories are private temporary folders outside the repository.
 
+## Spending tokens
+
+Almost all the cost of a review is the conversation being read again on every turn, so it grows with how much code sits in your own context and how many turns you take. Keep your context for judgement:
+
+- Read line ranges, not whole files: the function you assess and its callers, from `grep -n` hits, about 80 lines at a time. Send independent reads and greps in one turn.
+- Give reading to subagents when the work is large (more than about 30 candidates, more than about 20 entrypoints, or a repository you cannot read in full). Start each in the foreground with a mid-tier model (`model: sonnet` in Claude Code), give it `context.md`, its slice of the work and the reference it needs, and ask for JSON back: per candidate the ID or a new `AGENT-` title, `path:line` of the evidence, one sentence of reasoning and a suggested disposition. A subagent may also write a proof test and run `prove.py`; `prove.py` itself decides whether it proves anything.
+- Judge what comes back yourself: read only the cited lines, decide the disposition, and keep the attack reasoning, the severity and the final word with you. A subagent's claim is a lead, not a verdict.
+
 The Boundaries at the end hold for every step.
 
 ## 1. Make sure the scanners are ready
@@ -30,7 +38,7 @@ Done when `--check` prints `prerequisites-ready`, or the user has chosen to go o
 | commit [SHA] | `--commit [SHA]` | Full snapshot of that commit, everything in it |
 | release | `--release` | Full scan plus secrets in all GitHub history and archives |
 
-The command prints one JSON line: the `report.json` path (a private temporary folder; keep all review files there), `status`, and per-engine status and counts. Rely on `status` rather than the exit code if you pipe the output. When the user wants no network at all, add `--offline` (skips the advisory refresh; say so in the report). Exit 0 = no candidates, 1 = candidates, 2 = some coverage missing. A partial scan still has usable findings: continue, and list the gaps at the end. [Engine coverage](references/engines.md) explains what each engine does and does not see. Read the report's `findings` (IDs `SAST-`, `SCA-`, `SECRET-`) and each engine's `coverage`.
+The command prints one JSON line: the `report.json` path (a private temporary folder; keep all review files there), `status`, and per-engine status and counts. Rely on `status` rather than the exit code if you pipe the output. When the user wants no network at all, add `--offline` (skips the advisory refresh; say so in the report). Exit 0 = no candidates, 1 = candidates, 2 = some coverage missing. A partial scan still has usable findings: continue, and list the gaps at the end. [Engine coverage](references/engines.md) explains what each engine does and does not see. List the findings (IDs `SAST-`, `SCA-`, `SECRET-`) with `python3 scripts/candidates.py <report.json>`, one line per rule with a count and a few places (`--rule <rule> --all` for one rule), and read each engine's `coverage` from the JSON line above; do not read `report.json` whole.
 
 Done when you hold the `report.json` path and know, for every engine, whether it ran, was skipped or failed.
 
@@ -48,13 +56,13 @@ Done when `context.md` exists and every server, handler group and command the co
 
 Follow [investigate](references/investigate.md): trace source to sink, decide who can reach it and the concrete impact, and prove it: write a test in a temporary copy, modelled on a test the project already has, and run it with `scripts/prove.py`, which records it in `proofs.json`. It runs each of the two attempts in a fresh copy of that prepared copy, so nothing the first attempt leaves behind decides the second; for a copy too large to duplicate, `--same-copy --reset "<how the state is undone>"` runs both in place and records how. Save `assessments.json` beside the report. One entry may cover many IDs with `ids` when one rationale truly fits each of them (for example the same rule in test fixtures).
 
-Many candidates? Start with high scanner severity and code closest to entrypoints. Dismiss by rule, not one by one: when one rationale fits every hit of a rule in the same kind of code, write one entry with `ids` (Bandit's `assert` check and ESLint's object-injection check in test files are already left out by the scanner and counted in the report's coverage). The scanners are a head start, not the review: keep at least a third of the session for step 5, because the flaws scanners do not see are most of what a review misses. A run that spends its session on thousands of scanner candidates misses the request forgery and authorization flaws that no scanner sees. With more than about 30 candidates, or several independent subsystems, split the work: give each subagent `context.md`, its list of IDs and the investigate reference, and merge the JSON arrays they return. Never drop an ID; unassessed IDs stay `unreviewed`.
+Many candidates? Start with high scanner severity and code closest to entrypoints. Dismiss by rule, not one by one: when one rationale fits every hit of a rule in the same kind of code, write one entry with `ids` (Bandit's `assert` check and ESLint's object-injection check in test files are already left out by the scanner and counted in the report's coverage). The scanners are a head start, not the review: keep at least a third of the session for step 5, because the flaws scanners do not see are most of what a review misses. A run that spends its session on thousands of scanner candidates misses the request forgery and authorization flaws that no scanner sees. With more than about 30 candidates, or several independent subsystems, split the work as Spending tokens says: give each subagent `context.md`, its list of IDs (a rule group from `candidates.py` is a natural slice) and the investigate reference, and merge the JSON arrays they return after checking their cited lines. Never drop an ID; unassessed IDs stay `unreviewed`.
 
 Done when `render_review.py` (step 6) counts no `unreviewed` ID, or you can name the ones left and why.
 
 ## 5. Hunt for what scanners miss
 
-Follow [hunt](references/hunt.md). Scanners do not understand authorization, business logic or cross-file data flow. Walk the entrypoints from your map and record real issues in `agent_findings.json` (IDs `AGENT-0001`, ...), each with its own assessment.
+Follow [hunt](references/hunt.md). Scanners do not understand authorization, business logic or cross-file data flow. Walk the entrypoints from your map and record real issues in `agent_findings.json` (IDs `AGENT-0001`, ...), each with its own assessment. On a large repository, split the Entrypoints list into areas and give each to a subagent as Spending tokens says, with the hunt reference; then verify each lead it returns at its cited lines before you record it.
 
 Mark each line of the Entrypoints list in `context.md` as `walked` or `not walked` with the reason. Done when every line has its mark: the unwalked ones are coverage gaps for the report, and a hunt that stops early without saying so reads as a clean result.
 
