@@ -27,6 +27,44 @@ Three blind runs per setup on the original and one on the fixed twin, the same m
 
 What it says: on code flaws the difference is one hit, inside the noise; the bare model already finds almost every flaw at levels 2 to 5. The skill's lead comes from dependencies and from steadier results. One run dismissed most advisories as unreachable, which is why the low end is 2 of 10. The skill missed a secret that exists only in Git history in all three runs, while the bare model found it each time with `git log`; full scans read local history since, and that change has not been measured.
 
+## Code review on two larger applications, 2026-11-24 and 2026-11-25
+
+**Setup.** Two applications, larger than the arena:
+- **A:** about 85,000 lines of own code, a Python (FastAPI) API with a Vue and TypeScript frontend, with 35 planted flaws.
+- **B:** about 190,000 lines, a Python (Django) API with a TypeScript and JavaScript frontend, with 20 planted flaws.
+
+Every flaw has an executable proof, and the keys are private. Each run is blind, uses Opus 5.5 and gets the same written rules, and there is one run per row. Cost is the run's tokens, its subagents' included, at API list prices. Copies built before 2026-11-25 let a reviewer see which files had changed, so runs on those copies are left out. Two later runs on A could use test helpers left behind in the copy; they are marked.
+
+**Spending less.**
+
+| local-security-review | A: flaws found | B: flaws found | Cost per run, A and B |
+| --- | --- | --- | --- |
+| 0.13.1, one agent | 17 of 35 | 6 of 20 | $33 and $35 |
+| Hunting subagents on a mid-tier model | 14 and 12 | — | $23 and $19 (A) |
+| Hunting subagents on the reviewer's model | 19 | 4 | $38 and $31 |
+| One agent, hunting with less reading | 9 | 3 | $23 and $18 |
+
+- **No cheaper setup kept the flaws.** Over every variant, flaws found tracked money spent: about 0.4 to 0.6 flaws per dollar on A.
+- **Mid-tier hunters missed the same authorization flaws in both runs.** They read the right handlers and missed what was wrong in them.
+- **Hunters on the reviewer's model found as much as 0.13.1, at the same cost.** That is now the default.
+- **A quick review is a choice.** When the user asks for one, the hunters run on a mid-tier model and the report says so.
+
+**Finding more.** The next three versions added, in turn:
+- `sinks.py`, a list of places the hunt must decide on one by one (outbound connections, unpacking, files sent back, unescaped markup, security setting defaults);
+- a rule that a found flaw is not cleared by being a default or intended behaviour;
+- a "done when" gate: every unchecked place carries a finding or names the guard that stops it.
+
+| Version | A | B |
+| --- | --- | --- |
+| Places list | 16 | 2 |
+| Plus the recording rule | 19 (helpers available) | 4 |
+| Plus the gate | 18 (helpers available), precision 96 % | 2 |
+
+- **On A:** the list found the zip import without a size cap in all three runs and in no run before it. Results otherwise stayed at 0.13.1's level, with most findings proven by a test that failed twice: 15 to 23 per run.
+- **On B:** the list put every request-forgery place in front of the reviewer, and the reviewers wrote them down as user-set addresses with no check: webhook URLs, model-backend URLs, a storage endpoint, a cache host. Then they left them out as intended behaviour or defaults. Neither the rule nor the gate changed that while the run's rules said false alarms count against the result.
+- **B's key is narrower than what the reviewers prove.** The last run reported 22 findings and proved 17 with failing tests, and the key credits 2. Its other findings were access across organisations that the key does not hold, so B's precision is not a count of false alarms.
+- **Not measured yet:** a run of B whose rules do not count false alarms against it.
+
 ## Runtime testing on the arena, 2026-11-18
 
 Two series on the same day. The first ran before the runner changes and on a model that was not recorded, two runs per setup and no twin. The second ran the version in this repository at 0.3.0: three runs per setup on the original and one on the fixed twin, all eight on Opus 5.5 with the same rules, so its numbers can be compared with each other and not with the first series.
