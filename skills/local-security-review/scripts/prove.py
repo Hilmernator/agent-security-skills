@@ -55,7 +55,8 @@ def main(argv=None):
     runs = []
     for _ in range(2):
         # Each attempt starts from the prepared copy, so nothing the first attempt left (files, a database) decides the second.
-        with tempfile.TemporaryDirectory() as scratch:
+        # Beside the prepared copy, not in the system temp folder: a sandbox that may read the copy may read there too.
+        with tempfile.TemporaryDirectory(dir=copy.parent, prefix=f".{copy.name}-attempt-") as scratch:
             where = copy if args.same_copy else Path(scratch) / "attempt"
             if not args.same_copy:
                 shutil.copytree(copy, where, symlinks=True)
