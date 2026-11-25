@@ -63,7 +63,8 @@ Every flaw has an executable proof, and the keys are private. Each run is blind,
 - **On A:** the list found the zip import without a size cap in all three runs and in no run before it. Results otherwise stayed at 0.13.1's level, with most findings proven by a test that failed twice: 15 to 23 per run.
 - **On B:** the list put every request-forgery place in front of the reviewer, and the reviewers wrote them down as user-set addresses with no check: webhook URLs, model-backend URLs, a storage endpoint, a cache host. Then they left them out as intended behaviour or defaults. Neither the rule nor the gate changed that while the run's rules said false alarms count against the result.
 - **B's key is narrower than what the reviewers prove.** The last run reported 22 findings and proved 17 with failing tests, and the key credits 2. Its other findings were access across organisations that the key does not hold, so B's precision is not a count of false alarms.
-- **Not measured yet:** a run of B whose rules do not count false alarms against it.
+- **The run's rules held them back, not the skill.** One run of B used the last version with a single rule changed: instead of "false alarms count against the result", it said to report every flaw an attacker could use, defaults included, since the owner decides what is intended. It found 11 of 20 flaws (55 %), against 2 to 6 for every earlier run on B, and 4 of the 6 request-forgery flaws, where earlier runs found at most one. It reported 65 findings, so its precision against the key fell to 20 %; that is a lower bound, for the reason above. It took 22 minutes and cost $32.
+- **What follows for using the skill:** how much of request forgery and off-by-default protections reaches the report depends on what the reviewer is told about false alarms. Asking for everything an attacker could use, with the owner deciding what is intended, is what brought them out.
 
 ## Runtime testing on the arena, 2026-11-18
 
