@@ -131,7 +131,7 @@ class ProveTests(unittest.TestCase):
 
     def test_each_attempt_starts_from_the_same_prepared_copy(self):
         # Both attempts used to run in one copy, so state the first left behind could decide the second.
-        leaky = ("import pathlib\nassert pathlib.Path(%r) in pathlib.Path.cwd().resolve().parents, 'attempt ran elsewhere'\nflag = pathlib.Path('state.flag')\n" % str(self.copy.parent) + "if flag.exists():\n    raise SystemExit(0)\n"
+        leaky = ("import pathlib\nassert pathlib.Path(%r) in pathlib.Path.cwd().resolve().parents and pathlib.Path.cwd().name == 'copy', 'attempt ran elsewhere'\nflag = pathlib.Path('state.flag')\n" % str(self.copy.parent) + "if flag.exists():\n    raise SystemExit(0)\n"
                  "flag.write_text('x')\nassert False, 'BOUNDARY role changed'\n")
         done = self.prove(leaky)
         self.assertEqual((done.returncode, json.loads(done.stdout)["proven"]), (0, True), done.stderr)
