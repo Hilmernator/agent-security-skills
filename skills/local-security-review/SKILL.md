@@ -64,9 +64,13 @@ Done when `render_review.py` (step 6) counts no `unreviewed` ID, or you can name
 
 ## 5. Hunt for what scanners miss
 
-Follow [hunt](references/hunt.md). Scanners do not understand authorization, business logic or cross-file data flow. Walk the entrypoints from your map and record real issues in `agent_findings.json` (IDs `AGENT-0001`, ...), each with its own assessment. On a large repository, split the Entrypoints list into areas and give each to a subagent as Spending tokens says, with the hunt reference; then verify each lead it returns at its cited lines before you record it.
+Follow [hunt](references/hunt.md). Scanners do not understand authorization, business logic or cross-file data flow. The hunt has two lists, and both are walked to the end.
 
-Mark each line of the Entrypoints list in `context.md` as `walked` or `not walked` with the reason. Done when every line has its mark: the unwalked ones are coverage gaps for the report, and a hunt that stops early without saying so reads as a clean result.
+First the places: run `python3 scripts/sinks.py <repository-root>`. It lists where the server connects to an address (`outbound`), unpacks or decodes what it was sent (`unpack`), sends a stored file back (`serve-file`), writes markup unescaped (`raw-html`), and sets a security setting's default (`setting`); `--kind K` shows every place of one kind. Request forgery, decompression bombs, unescaped output and protections that are off by default were most of what reviews missed, and they sit at places like these where no scanner fired, because the address or the size came from stored data or a setting. For each place, trace back who sets the address, size, file or markup (a user, a tenant admin, stored data, an operator) and what checks it, both when it is saved and when it is used; a place is walked when you can name both. When a user can reach it without a sufficient check, record the flaw where the fix belongs: the validation at save time, the connect call, or the line that sets the default. Copy the list into `context.md` under `## Places`, each with its mark and one line.
+
+Then the entrypoints: walk the entrypoints from your map and record real issues in `agent_findings.json` (IDs `AGENT-0001`, ...), each with its own assessment. On a large repository, split the Entrypoints list into areas and the places into kinds, and give each to a subagent as Spending tokens says, with the hunt reference; then verify each lead it returns at its cited lines before you record it.
+
+Mark each line of the Entrypoints and Places lists in `context.md` as `walked` or `not walked` with the reason. Done when every line has its mark: the unwalked ones are coverage gaps for the report, and a hunt that stops early without saying so reads as a clean result.
 
 ## 6. Render and report
 

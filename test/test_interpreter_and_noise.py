@@ -119,5 +119,35 @@ class Candidates(unittest.TestCase):
         self.assertNotIn("Traceback", piped.stderr)  # a reader that stops early is not an error
 
 
+class Sinks(unittest.TestCase):
+    """The hunt missed request forgery and decompression flaws where no scanner fired; sinks.py lists those places."""
+
+    def test_server_side_places_are_listed_and_client_calls_tests_and_docs_are_not(self):
+        import subprocess
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        files = {
+            "app/storage.py": "import redis\ndef client(self):\n    return redis.StrictRedis(host=self.host, port=self.port)\n",
+            "app/hooks.py": "import requests\ndef send(hook):\n    requests.post(hook.url, json={})\n",
+            "app/importer.py": "from zipfile import ZipFile\ndef load(path):\n    with ZipFile(path) as z:\n        z.extractall('/tmp/x')\n",
+            "app/settings/base.py": "SSRF_PROTECTION_ENABLED = get_bool_env('SSRF_PROTECTION_ENABLED', False)\n",
+            "app/views.py": "def serve(f):\n    return FileResponse(f.open('rb'))\n",
+            "app/templates/base.html": "<script>var keys = {{ hotkeys|safe }};</script>\n",
+            "web/src/api.ts": "export const me = () => axios.get('/api/me');\nthis.requests.get(routes.about);\n",
+            "tests/test_hooks.py": "import requests\nrequests.post(url)\n",
+            "docs/page.ejs": "<%- partial('x') %>\n",
+        }
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text)
+        out = subprocess.run([sys.executable, str(SCRIPTS / "sinks.py"), str(root)], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        for place in ("app/storage.py:3", "app/hooks.py:3", "app/importer.py:3", "app/importer.py:4", "app/settings/base.py:1",
+                      "app/views.py:2", "app/templates/base.html:1"):
+            self.assertIn(place, out.stdout)
+        for absent in ("web/src/api.ts", "tests/", "docs/"):
+            self.assertNotIn(absent, out.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
