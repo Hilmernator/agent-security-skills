@@ -80,6 +80,9 @@ def probe(repo, finding, history):
     elif not result["high_entropy"]:
         # Hand-written values (e.g. "SUPER_SECRET_API_KEY") can still be real, weak credentials.
         result["hint"] = "low-entropy-literal: check where it is used" + ("; committed" if exposed else "")
+    elif result["test_or_example_path"]:
+        # Fixtures and saved pages carry random-looking values far more often than live keys.
+        result["hint"] = "looks-real-in-test-or-example: check it is not a live credential"
     else:
         result["hint"] = "looks-real-and-committed: rotate" if exposed else "looks-real-local-only: keep out of git"
     return result

@@ -205,7 +205,7 @@ def merge(report, assessments, groups=None, hunted=None, proofs=None):
         raise ValueError("Proofs must be an object keyed by finding ID")
     for finding_id, record in (proofs or {}).items():
         if finding_id not in id_set:
-            raise ValueError(f"Proof for an unknown ID: {str(finding_id)[:40]}")
+            raise ValueError(f"Proof for an unknown ID: {str(finding_id)[:40]} (write the finding into agent_findings.json, then render)")
         if not proven(record):
             continue  # an attempt that did not fail on its assertion proves nothing; the finding keeps its tier
         disposition = by_id.get(finding_id, {}).get("disposition", "unreviewed")

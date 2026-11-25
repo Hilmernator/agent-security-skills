@@ -230,6 +230,11 @@ class SecretProbeTests(unittest.TestCase):
             self.assertNotIn(real, by_file)
             hints = {item["id"]: item["hint"] for item in json.loads(by_file)}
             self.assertEqual(hints["config.py:4"], "low-entropy-literal: check where it is used; committed")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "fixture.py").write_text(f'KEY = "{real}"\n')
+            in_test = json.loads(subprocess.run([sys.executable, str(SCRIPTS / "secret_probe.py"), "--repo", str(repo), "--file",
+                                                 "tests/fixture.py"], capture_output=True, text=True, check=True).stdout)
+            self.assertEqual(in_test[0]["hint"], "looks-real-in-test-or-example: check it is not a live credential")
 
     def test_probe_file_accepts_absolute_path_through_a_symlinked_alias(self):
         # macOS: /tmp and /var are links into /private, so the agent's path and the resolved repo differ.

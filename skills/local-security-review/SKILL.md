@@ -70,7 +70,7 @@ First the places: run `python3 scripts/sinks.py <repository-root>`. It lists whe
 
 Then the entrypoints: walk the entrypoints from your map and record real issues in `agent_findings.json` (IDs `AGENT-0001`, ...), each with its own assessment. On a large repository, split the Entrypoints list into areas and the places into kinds, and give each to a subagent as Spending tokens says, with the hunt reference; then verify each lead it returns at its cited lines before you record it.
 
-Mark each line of the Entrypoints and Places lists in `context.md` as `walked` or `not walked` with the reason. Done when every line has its mark: the unwalked ones are coverage gaps for the report, and a hunt that stops early without saying so reads as a clean result.
+Mark each line of the Entrypoints and Places lists in `context.md` as `walked` or `not walked` with the reason. A walked line that names a value a user sets with no check, a protection off by default, or a check missing between users or tenants carries the ID of its finding; otherwise it names the guard that stops it (`guard: file:line`). "Upstream design", "by design" and "the operator's choice" are not guards. Before step 6, read both lists once more and add the findings such lines lack. Done when every line has its mark and every such line has an ID or a guard: the unwalked ones are coverage gaps for the report, and a hunt that stops early without saying so reads as a clean result.
 
 ## 6. Render and report
 
