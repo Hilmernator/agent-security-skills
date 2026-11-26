@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """List the places a hunt must decide on one by one: where the server connects to an address, unpacks or decodes
-something it was sent, writes raw HTML, or reads a security setting's default.
+something it was sent, sends a file back, writes raw HTML, starts a command, reads a body whole, exposes a debug surface,
+or reads a security setting's default.
 
   sinks.py <repository-root> [--kind KIND] [--all] [--places N]
 
@@ -47,6 +48,21 @@ KINDS = {
         r"\bFileResponse\(", r"\bRangedFileResponse\(", r"\bsend_file\(", r"\bsend_from_directory\(", r"\bStreamingResponse\(",
         r"Content-Disposition.*inline", r"\bres\.(sendFile|download)\(", r"\bhttp\.ServeFile\(", r"\bX-Accel-Redirect\b",
     ]),
+    "exec": ("a command is started: which parts of it (arguments, options that begin with -, environment, the "
+             "program itself) can a user, a repository or a stored value set, and does a shell read it?", [
+        r"\bsubprocess\.(run|Popen|call|check_call|check_output)\(", r"\bos\.(system|popen|exec\w*|spawn\w*)\(",
+        r"\bshell\s*=\s*True\b", r"\bexec\.Command(Context)?\(", r"\bchild_process\b|\b(execSync|execFile|spawnSync)\(|(?<![:.\w])spawn\(\s*[\"'`\w]",  # not tokio::spawn or thread::spawn
+        r"\bCommand::new\(", r"\bProcessBuilder\(|\bRuntime\.getRuntime\(\)\.exec\(",
+    ]),
+    "unbounded-read": ("a body, stream or response is read whole: is its size limited before it is read?", [
+        r"\b(io|ioutil)\.ReadAll\(", r"\bjson\.NewDecoder\(\s*\w+\.Body\b", r"\.read_to_end\(|\.read_to_string\(",
+        r"\bawait\s+\w+\.(body|read|json|text)\(\)", r"\b(response|resp|r)\.(content|text|json\(\))\b",
+        r"\.arrayBuffer\(\)|\.blob\(\)", r"\bbody-parser\b|\bexpress\.(json|raw|text)\(",
+    ]),
+    "debug": ("a debug, profiling or diagnostic surface: who can reach it, and is it on by default?", [
+        r"net/http/pprof|\bpprof\.", r"[\"'`]/debug/", r"\bactuator\b", r"\buse_debugger\b|\bDebuggedApplication\b",
+        r"\bdebug_toolbar\b", r"\bgraphiql\b|\bintrospection\s*[:=]\s*(True|true)",
+    ]),
     "setting": ("a security setting and its default: is the protection on unless an operator turns it off?", [
         r"\b[A-Z0-9_]*(SSRF|ALLOW|BLOCK|VERIFY|PROTECT|SECURE|CSRF|CORS|DEBUG|SANDBOX|INSECURE|DISABLE|ENABLE|SIGNUP|"
         r"REGISTRATION|PUBLIC|TRUST)[A-Z0-9_]*\s*[:=]\s*.*\b(True|False|true|false|0|1|None)\b",
@@ -54,7 +70,7 @@ KINDS = {
 }
 SKIP_DIRS = {".git", "node_modules", "vendor", "third_party", "dist", "build", ".venv", "venv", "__pycache__", "target",
              "coverage", ".next", ".nuxt", "security", "migrations", "docs", "examples"}
-TEST = re.compile(r"(^|/)(tests?|__tests__|spec|e2e|fixtures?|testdata)(/|$)|(^|/)(test_[^/]*|[^/]*_test\.\w+|[^/]*\.(test|spec)\.\w+|conftest\.py)$")
+TEST = re.compile(r"(^|/)([\w-]*[-_])?(tests?|__tests__|spec|e2e|fixtures?|testdata)(/|$)|(^|/)(test_[^/]*|[^/]*_test\.\w+|[^/]*\.(test|spec)\.\w+|conftest\.py)$")
 SOURCE = {".py", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".go", ".rs", ".rb", ".php", ".java", ".kt", ".html",
           ".jinja", ".j2", ".hbs", ".ejs", ".erb"}
 SETTINGS = re.compile(r"(settings|config|conf|constants|defaults|env)[^/]*\.\w+$|(^|/)(settings|config)/", re.I)
@@ -80,7 +96,9 @@ def places(root):
                 for kind, pattern in compiled.items():
                     if kind == "setting" and not SETTINGS.search(rel):
                         continue
-                    if pattern.search(line) and not line.lstrip().startswith(("#", "//", "*", "import ", "from ")):
+                    head = line.lstrip()
+                    if pattern.search(line) and not head.startswith(("#", "//", "*")) and (
+                            kind == "debug" or not head.startswith(("import ", "from "))):  # importing pprof is what exposes it
                         found[kind].append((rel, number, line.strip()[:120]))
     return found
 
