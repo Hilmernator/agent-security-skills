@@ -4,7 +4,7 @@ What changed in each version, newest first, and what an existing installation mu
 
 ## Unreleased
 
-- local-security-review: `sinks.py` also lists commands that are started (`exec`), bodies and responses read whole (`unbounded-read`) and debug or profiling surfaces (`debug`), and leaves out test crates such as `language-tests/`.
+- local-security-review: `sinks.py` also lists commands that are started (`exec`), bodies and responses read whole (`unbounded-read`) and debug or profiling surfaces (`debug`), and leaves out folders whose name ends in `-tests` or `_tests`.
 - local-security-review: an assessment may carry `owner_decision`, and the report lists such findings under "Decisions for the owner" as well as in the fix plan, so a flaw that is a shipped default or depends on the deployment is handed to the owner instead of being left out. A false-positive needs medium or high confidence (high only made reviewers raise their confidence). An incomplete scan says why in `security.py`'s summary (`why_incomplete`).
 - local-security-review: the toolchain venv is built with Python 3.14 (3.12 if that fails) and an older one is rebuilt at setup, so Bandit parses current syntax; an advisory whose only range is open-ended but whose last known affected version is older than the installed one gets a `range_note`; a symlink to a file inside the repository is no longer a secret-scan coverage gap, nor a symlink in history; `prove.py --cwd` runs the test command from a folder inside the copy, and its errors say how to give an f-string marker and why the command must be separate words.
 - local-dast: a JSON answer nested deeper than 512 levels is a coverage gap on every Python; Python 3.14 parsed what older versions refused.

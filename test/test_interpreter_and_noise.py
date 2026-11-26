@@ -140,7 +140,7 @@ class Sinks(unittest.TestCase):
             "cmd/fetch.go": "package main\nfunc get(r *http.Response) {\n\tdata, _ := io.ReadAll(r.Body)\n}\n",
             "cmd/server.go": "package main\nimport _ \"net/http/pprof\"\n",
             "src/worker.rs": "fn run() {\n    tokio::spawn(async move {});\n}\n",
-            "language-tests/src/run.rs": "fn t() { Command::new(\"x\"); }\n",
+            "conformance-tests/src/run.rs": "fn t() { Command::new(\"x\"); }\n",
         }
         for rel, text in files.items():
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +150,7 @@ class Sinks(unittest.TestCase):
         for place in ("app/storage.py:3", "app/hooks.py:3", "app/importer.py:3", "app/importer.py:4", "app/settings/base.py:1",
                       "app/views.py:2", "app/templates/base.html:1", "app/git.py:3", "cmd/fetch.go:3", "cmd/server.go:2"):
             self.assertIn(place, out.stdout)
-        for absent in ("web/src/api.ts", "tests/", "docs/", "src/worker.rs", "language-tests/"):
+        for absent in ("web/src/api.ts", "tests/", "docs/", "src/worker.rs", "conformance-tests/"):
             self.assertNotIn(absent, out.stdout)
 
 
