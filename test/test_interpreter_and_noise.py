@@ -149,5 +149,24 @@ class Sinks(unittest.TestCase):
             self.assertNotIn(absent, out.stdout)
 
 
+class ToolchainPython(unittest.TestCase):
+    """Bandit parses with its venv's Python; a 3.12 venv could not read 3.14 syntax in ten files of one review."""
+
+    def test_an_older_toolchain_venv_is_seen_as_older(self):
+        import importlib.util
+        import tempfile
+        spec = importlib.util.spec_from_file_location("setup_sast", SCRIPTS / "setup_sast.py")
+        setup_sast = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(SCRIPTS))
+        spec.loader.exec_module(setup_sast)
+        root = Path(tempfile.mkdtemp())
+        self.assertEqual(setup_sast.venv_minor(root), 0)
+        (root / "venv").mkdir()
+        (root / "venv" / "pyvenv.cfg").write_text("home = /x\nversion_info = 3.12.9\n")
+        self.assertLess(setup_sast.venv_minor(root), setup_sast.NEWEST_PYTHON)
+        (root / "venv" / "pyvenv.cfg").write_text("home = /x\nversion = 3.14.4\n")
+        self.assertEqual(setup_sast.venv_minor(root), 14)
+
+
 if __name__ == "__main__":
     unittest.main()

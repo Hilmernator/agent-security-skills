@@ -76,8 +76,9 @@ def validate_assessment(item):
                 raise ValueError("Evidence reference line must be a positive integer")
     if item["disposition"] == "false-positive":
         require_text(item, "dismissal_reason")
-        if item["confidence"] != "high":
-            raise ValueError("False-positive requires high confidence; otherwise use needs-review. For a group of IDs, split out the ones you can dismiss with high confidence and mark the rest needs-review")
+        if item["confidence"] not in ("medium", "high"):
+            # High only made reviewers raise their confidence to get past it; low still means the code was not read.
+            raise ValueError("False-positive requires medium or high confidence; otherwise use needs-review")
     elif item["disposition"] in ACTIONABLE:
         require_text(item, "preconditions")
     if "proof" in item:
@@ -86,6 +87,10 @@ def validate_assessment(item):
         require_text(item, "no_proof")
     if "verify" in item:
         require_text(item, "verify")
+    if "owner_decision" in item:
+        if item["disposition"] not in ("confirmed", "likely", "needs-review"):
+            raise ValueError("owner_decision belongs to a flaw that stays in the report, not to a dismissed finding")
+        require_text(item, "owner_decision")
 
 
 def expand(assessments):
@@ -183,6 +188,7 @@ def group_issues(rows, groups):
                  "verify": group.get("verify") if group else first.get("verify"),
                  "proof": "\n".join(sorted({a["proof"] for a in assessments if a.get("proof")})) or None,
                  "no_proof": "\n".join(sorted({a["no_proof"] for a in assessments if a.get("no_proof")})) or None,
+                 "owner_decision": "\n".join(sorted({a["owner_decision"] for a in assessments if a.get("owner_decision")})) or None,
                  "grouping_basis": group["root_cause"] if group else "Single finding"}
         issues.append(issue)
     return issues
@@ -280,6 +286,12 @@ def markdown(review):
                   f"- **Signals:** {safe(', '.join(issue['finding_ids']))}. Grouping basis: {safe(issue['grouping_basis'])}", ""]
     if not actionable:
         lines.append("No confirmed/likely fixes identified. Unreviewed findings are not a pass.")
+    for_owner = sorted((issue for issue in review["issues"] if issue.get("owner_decision")), key=order)
+    if for_owner:
+        lines += ["", "## Decisions for the owner (flaws that are a default, documented or depend on the deployment)", ""]
+        for issue in for_owner:
+            lines.append(f"- {safe(issue['id'])} ({safe(issue['disposition'])}): {safe(issue['title'])}. "
+                         f"Decide: {safe(issue['owner_decision'])} Fix if not intended: {safe(issue['recommendation'])}")
     unresolved = sorted((issue for issue in review["issues"] if issue["disposition"] in ("needs-review", "unreviewed")), key=order)
     if unresolved:
         lines += ["", "## Unresolved (tier scanner: not judged yet; needs a decision or more evidence)", ""]
@@ -338,6 +350,13 @@ def coverage_lines(scan):
     if scan.get("error"):
         lines.append(f"scan error: {scan['error']}")
     return lines or ["No engine metadata in report."]
+
+
+def why_incomplete(scan):
+    """The coverage lines that explain an incomplete scan: engines not complete, gaps, errors."""
+    return [line for line in coverage_lines(scan)
+            if "gap:" in line or "error" in line or "partially parsed" in line or
+            not line.split(";")[0].endswith(("no-findings", "findings", "not-applicable"))]
 
 
 def write_private(path, content):

@@ -121,13 +121,25 @@ def holds(expected, actual):
     return type(actual) is type(expected) and actual == expected
 
 
+MAX_JSON_DEPTH = 512
+
+
 def answer_json(headers, body):
     """The JSON an answer carries. For text/event-stream (MCP's streamable HTTP) that is the data of the last event that has any."""
     text = body.decode("utf-8")
     if any(key.lower() == "content-type" and value.lower().startswith("text/event-stream") for key, value in headers):
         events = [[line[5:].strip() for line in event.splitlines() if line.startswith("data:")] for event in re.split(r"\r?\n\r?\n", text)]
         text = "\n".join(next((data for data in reversed(events) if data), []))
-    return json.loads(text)
+    value = json.loads(text)
+    # Older Pythons stop deep nesting with RecursionError, 3.14 parses it: one fixed limit, so the result never depends on the interpreter.
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            raise RecursionError("JSON nested too deeply")  # what older Pythons raise: the case becomes a gap, not a failed check
+        if isinstance(item, (list, dict)):
+            stack.extend((child, depth + 1) for child in (item.values() if isinstance(item, dict) else item))
+    return value
 
 
 def dig(value, path):

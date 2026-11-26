@@ -6,6 +6,7 @@ import hashlib
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -169,7 +170,8 @@ def project(scanner, data):
                 duplicate_of = next((first_by_alias[key] for key in keys if key in first_by_alias), None)
                 for key in keys:
                     first_by_alias.setdefault(key, duplicate_of or finding_id)
-                findings.append({"id": finding_id, "engine": "osv-scanner",
+                note = open_range_note(item["package"], vuln.get("affected", []))
+                findings.append({"id": finding_id, "engine": "osv-scanner", **({"range_note": note} if note else {}),
                                  "rule": vuln["id"], "path": source["source"]["path"],
                                  "package": item["package"],
                                  "aliases": vuln.get("aliases", []),
@@ -184,6 +186,34 @@ def project(scanner, data):
                                  "affected": vuln.get("affected", [])})
     return findings, {"scanned_packages": packages, "sources": sources,
                       "scanner_errors": len(data.get("errors", []))}
+
+
+def version_key(text):
+    # ponytail: numeric parts only, pre-release tags ignored; enough to tell 4.6.4 from "<= 3.12.4", not a semver library.
+    return tuple(int(part) for part in re.findall(r"\d+", str(text).split("-")[0])[:4])
+
+
+def open_range_note(package, affected):
+    """Why an advisory may not apply: its only range is open-ended and the database's last known affected version is older.
+
+    OSV matched nuxt 4.6.4 to an advisory whose range starts in 3.x and names no fix; the record's own
+    `last_known_affected_version_range` said 3.x. The finding stays for the reviewer; this says where to look.
+    """
+    version = package.get("version")
+    for entry in affected:
+        if entry.get("package", {}).get("name") != package.get("name") or not version:
+            continue
+        events = [event for r in entry.get("ranges", []) for event in r.get("events", [])]
+        if any("fixed" in e or "last_affected" in e for e in events):
+            continue
+        last = (entry.get("database_specific") or {}).get("last_known_affected_version_range", "")
+        bound = re.match(r"\s*(<=?)\s*(\S+)", last)
+        if bound and version_key(version) and version_key(bound.group(2)) and (
+                version_key(version) > version_key(bound.group(2)) or
+                (bound.group(1) == "<" and version_key(version) == version_key(bound.group(2)))):
+            return (f"the advisory's range is open-ended, but its last known affected version is {last.strip()}; "
+                    f"{version} is above it: check the advisory before treating it as affected")
+    return None
 
 
 def git(target, env, *args):

@@ -255,10 +255,24 @@ def verify():
             path.parent.rmdir()
 
 
+NEWEST_PYTHON = 14  # the newest 3.x the toolchain venv is built with; Bandit can only parse what its Python parses
+
+
+def venv_minor(root):
+    """Minor version of the toolchain venv's Python, 0 when there is none."""
+    config = root / "venv" / "pyvenv.cfg"
+    found = re.search(r"^version(?:_info)?\s*=\s*3\.(\d+)", config.read_text(), re.M) if config.is_file() else None
+    return int(found.group(1)) if found else 0
+
+
 def install():
     root = toolchain()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     receipt_path = root / "license-inventory.json"
+    if receipt_path.exists() and venv_minor(root) < NEWEST_PYTHON:
+        # Bandit parses with the venv's own Python, so an older venv cannot read newer syntax (`except A, B:`, 3.14).
+        shutil.rmtree(root / "venv")
+        receipt_path.unlink()
     if receipt_path.exists():
         verified_receipt()
         print(f"Already installed: {root}")
@@ -268,7 +282,11 @@ def install():
     # Wheels only and disabled npm lifecycle scripts: installing tools must not
     # execute build hooks from packages or scripts from the target repository.
     if not (root / "venv/bin/python").exists():
-        subprocess.run(["uv", "venv", "--python", "3.12", str(root / "venv")], check=True)
+        for version in (f"3.{NEWEST_PYTHON}", "3.12"):
+            if subprocess.run(["uv", "venv", "--python", version, str(root / "venv")]).returncode == 0:
+                break
+        else:
+            raise subprocess.CalledProcessError(1, "uv venv")
     subprocess.run(["uv", "pip", "sync", "--python", str(root / "venv/bin/python"),
                     "--require-hashes", "--only-binary=:all:", str(root / "requirements.txt")], check=True)
     subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=root, check=True)

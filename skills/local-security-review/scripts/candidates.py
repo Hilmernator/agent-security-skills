@@ -38,7 +38,8 @@ def main(argv=None):
         shown = items if args.all else items[:args.places]
         for f in shown:
             package = (f.get("metadata") or {}).get("package")
-            print(f"  {f['id']} {f.get('path')}:{f.get('line')}" + (f"  {package}" if package else ""))
+            print(f"  {f['id']} {f.get('path')}:{f.get('line')}" + (f"  {package}" if package else "")
+                  + (f"  note: {f['range_note']}" if f.get("range_note") else ""))
         if len(items) > len(shown):
             print(f"  and {len(items) - len(shown)} more (--rule {rule} --all)")
     return 0

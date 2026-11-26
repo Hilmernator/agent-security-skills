@@ -259,6 +259,11 @@ class DastTests(unittest.TestCase):
         self.assertNotIn(REMOTE_HOST, result.stdout + result.stderr)
 
     def test_a_remote_run_verifies_the_certificate_and_says_what_it_is(self):
+        import ssl
+        if ssl.OPENSSL_VERSION.startswith("LibreSSL 2."):
+            # macOS's own Python 3.9 cannot verify a certificate from a current OpenSSL; the scripts never run on it
+            # (_python.py hands over to 3.10+), so only this in-process test would.
+            self.skipTest(f"{ssl.OPENSSL_VERSION} cannot verify the throw-away certificate; run the tests with Python 3.10+")
         server, cert = self.tls_server()
         with patch.object(dast, "INTERVAL", 0):
             rows, har = dast.capture(self.plan(REMOTE), remote=REMOTE)

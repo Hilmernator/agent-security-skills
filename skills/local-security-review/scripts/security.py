@@ -235,8 +235,12 @@ def main():
     counts = {}
     for finding in report["findings"]:
         counts[finding.get("engine", finding["scanner"])] = counts.get(finding.get("engine", finding["scanner"]), 0) + 1
-    print(json.dumps({"report": str(path), "status": report["status"], "candidates": len(report["findings"]),
-                      "engines": {name: f"{status}, {counts.get(name, 0)} candidates" for name, status in engines.items()}}))
+    summary = {"report": str(path), "status": report["status"], "candidates": len(report["findings"]),
+               "engines": {name: f"{status}, {counts.get(name, 0)} candidates" for name, status in engines.items()}}
+    if report["status"] == "incomplete":
+        from render_review import why_incomplete  # the same lines the report's Coverage section prints
+        summary["why_incomplete"] = why_incomplete(report)
+    print(json.dumps(summary))
     return {"no-findings": 0, "findings": 1, "incomplete": 2}[report["status"]]
 
 

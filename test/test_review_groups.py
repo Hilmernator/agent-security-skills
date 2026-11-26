@@ -100,10 +100,10 @@ class GroupTests(unittest.TestCase):
         self.assessments[1]["assessed_severity"] = "unknown"
         self.assertEqual(review.merge(self.report, self.assessments, [self.group], proofs=proofs)["issues"][0]["assessed_severity"], "unknown")
 
-    def test_false_positive_requires_explicit_reason_reference_and_high_confidence(self):
+    def test_false_positive_requires_explicit_reason_reference_and_medium_or_high_confidence(self):
         fp = {**self.assessments[0], "disposition": "false-positive", "confidence": "high",
               "dismissal_reason": "This call uses a literal constant; untrusted input cannot reach the argument."}
-        for changes in ({"dismissal_reason": ""}, {"evidence_refs": []}, {"confidence": "medium"},
+        for changes in ({"dismissal_reason": ""}, {"evidence_refs": []}, {"confidence": "low"},
                         {"evidence_refs": [{"path": "app.py", "line": True}]},
                         {"evidence_refs": [{"path": "app.py", "line": 0}]}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):

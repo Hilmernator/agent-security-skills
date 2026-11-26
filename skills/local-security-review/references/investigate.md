@@ -79,7 +79,7 @@ than the source.
 | --- | --- | --- |
 | `confirmed` | confirmed | A proof test failed twice on its assertion under `prove.py`. |
 | `likely` | judged | You traced the flow, nothing stops it, but no proof ran; `no_proof` says why. |
-| `false-positive` | judged | You can name the guard, constant input or unreachable code that rules it out (high confidence only). |
+| `false-positive` | judged | You can name the guard, constant input or unreachable code that rules it out (medium or high confidence). |
 | `needs-review` | scanner | Evidence is insufficient either way. Say exactly what would settle it. |
 
 "Intentional", "in tests" or "validated" alone is not a dismissal: name the guard or
@@ -160,7 +160,7 @@ whole class in one `ids` entry. Split out any instance where the input differs.
 `confirmed`/`likely`/`false-positive` also need `evidence_refs`
 (`[{"path": "src/a.rs", "line": 12}]`); `confirmed`/`likely` need `preconditions`
 (attacker position and remaining assumptions, or "none"); `false-positive` needs
-`dismissal_reason`; `likely` needs `no_proof` (one line on why no proof ran).
+`dismissal_reason`; `likely` needs `no_proof` (one line on why no proof ran). Any finding that stays in the report may carry `owner_decision`: one sentence on what the owner must decide when the flaw is a shipped default, documented behaviour or depends on the deployment; the report lists those under "Decisions for the owner".
 `confirmed` needs a proof in `proofs.json`, which only `prove.py` writes; never put
 `proof` in an assessment. Optional: `verify` (how to check the fix: for a confirmed
 finding, its proof test passing twice plus the project's own test command), and on an entry with `ids` a `title` for the issue in the fix plan

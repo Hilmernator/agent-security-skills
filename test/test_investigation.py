@@ -59,6 +59,31 @@ class RenderTests(unittest.TestCase):
         for finding_id in ("SAST-0001", "SAST-0002", "AGENT-0001"):
             self.assertIn(finding_id, text)
 
+    def test_a_flaw_that_is_a_default_goes_to_the_owner_not_out_of_the_report(self):
+        # Reviewers left out user-set addresses with no check as "a default"; the owner, not the reviewer, decides that.
+        owner = {**CORS, "owner_decision": "Any origin is the shipped default; keep it only if the API never serves a browser."}
+        text = review.markdown(review.merge(REPORT, [DISMISS, owner, TRAVERSAL], [], HUNTED, PROOFS))
+        section = text.split("## Decisions for the owner")[1].split("## ")[0]
+        self.assertIn("Any origin is the shipped default", section)
+        self.assertIn("cors", section.lower())
+        self.assertIn("cors", text.split("## Fix plan")[1].split("## Decisions")[0].lower())  # still in the fix plan
+        with self.assertRaises(ValueError):  # a dismissed finding cannot hand a decision to the owner
+            review.merge(REPORT, [{**DISMISS, "owner_decision": "x"}, CORS, TRAVERSAL], [], HUNTED, PROOFS)
+        medium = {**DISMISS, "confidence": "medium"}  # grouped dismissals at medium confidence are allowed; low are not
+        review.merge(REPORT, [medium, CORS, TRAVERSAL], [], HUNTED, PROOFS)
+        with self.assertRaises(ValueError):
+            review.merge(REPORT, [{**DISMISS, "confidence": "low"}, CORS, TRAVERSAL], [], HUNTED, PROOFS)
+
+    def test_an_incomplete_scan_says_why(self):
+        scan = {"status": "incomplete", "engines": [{"scanner": "sast", "status": "incomplete", "engines": [
+            {"tool": "bandit", "status": "incomplete", "error": "10 of 812 Python files could not be parsed: app/a.py, app/b.py"},
+            {"tool": "semgrep", "status": "findings", "coverage": {"scanned_files": 812}}]},
+            {"scanner": "secrets", "status": "incomplete", "coverage": {"gaps": [{"reason": "CLAUDE.md is a symbolic link"}]}}]}
+        why = review.why_incomplete(scan)
+        self.assertTrue(any("bandit" in line and "could not be parsed" in line for line in why), why)
+        self.assertTrue(any("symbolic link" in line for line in why), why)
+        self.assertFalse(any(line.startswith("semgrep") for line in why), why)
+
     def test_invalid_bulk_and_agent_entries_fail(self):
         for assessments, hunted in (([{**DISMISS, "id": "SAST-0001"}], []), ([{**DISMISS, "ids": []}], []),
                                     ([DISMISS, {**CORS, "id": "SAST-0001"}], []),
@@ -145,6 +170,17 @@ class ProveTests(unittest.TestCase):
         self.assertEqual(json.loads((self.out / "proofs.json").read_text())["SAST-0003"]["isolation"],
                          "same copy; reset: the test removes state.flag in its teardown")
 
+    def test_the_command_can_start_in_a_subfolder_and_must_be_separate_words(self):
+        (self.copy / "app").mkdir()
+        self.test.write_text("import pathlib\nassert pathlib.Path.cwd().name != 'app', 'BOUNDARY role changed'\n")
+        base = [sys.executable, str(SCRIPTS / "prove.py"), str(self.out / "report.json"), "SAST-0003", "--copy", str(self.copy),
+                "--test", "tests/security/test_role_escalation.py", "--expect", "BOUNDARY role changed"]
+        done = subprocess.run(base + ["--cwd", "app", "--", sys.executable, "-I", str(self.test)], capture_output=True, text=True)
+        self.assertTrue(json.loads(done.stdout)["proven"], done.stderr)  # ran in app/, so the assertion failed twice
+        for extra in (["--cwd", "../elsewhere"], []):
+            tail = ["--", f"{sys.executable} -I {self.test}"] if not extra else ["--", sys.executable, str(self.test)]
+            self.assertEqual(subprocess.run(base + extra + tail, capture_output=True, text=True).returncode, 2)
+
     def test_a_failing_assertion_proves_and_a_crash_does_not(self):
         crash = self.prove("raise RuntimeError('fixture missing')\nassert False, 'BOUNDARY role changed'\n")
         self.assertEqual((crash.returncode, json.loads(crash.stdout)["proven"]), (1, False))
@@ -183,6 +219,17 @@ class ScannerProjectionTests(unittest.TestCase):
             "vulnerabilities": [{"id": "RUSTSEC-1", "aliases": ["GHSA-1"]}, {"id": "GHSA-1", "aliases": ["RUSTSEC-1"]},
                                 {"id": "RUSTSEC-2"}]}]}]})
         self.assertEqual([f.get("duplicate_of") for f in findings], [None, "SCA-0001", None])
+
+    def test_an_open_ended_range_past_its_last_known_version_is_noted(self):
+        def finding(version, last, events=({"introduced": "3.0.0"},)):
+            affected = [{"package": {"name": "nuxt", "ecosystem": "npm"}, "ranges": [{"type": "SEMVER", "events": list(events)}],
+                         "database_specific": {"last_known_affected_version_range": last}}]
+            return scan.project("sca", {"results": [{"source": {"path": "package-lock.json"}, "packages": [{
+                "package": {"name": "nuxt", "version": version, "ecosystem": "npm"},
+                "vulnerabilities": [{"id": "GHSA-x", "affected": affected}]}]}]})[0][0]
+        self.assertIn("4.6.4 is above it", finding("4.6.4", "<= 3.12.4")["range_note"])
+        self.assertNotIn("range_note", finding("3.10.0", "<= 3.12.4"))
+        self.assertNotIn("range_note", finding("4.6.4", "<= 3.12.4", ({"introduced": "3.0.0"}, {"fixed": "3.13.0"})))
 
     def test_terraform_module_guard_only_flags_downloadable_modules(self):
         self.assertFalse(iac.remote_modules("ec2.tf", b'user_data = file("${path.module}/proxy.sh")\n'))

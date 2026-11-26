@@ -101,6 +101,22 @@ class DeepSecretsTests(unittest.TestCase):
             changed = self.run_scan(repo, offline=True)
             self.assertEqual(len([f for f in changed["findings"] if f["path"] == "candidate.env"]), 2)
 
+    def test_a_link_to_a_file_in_the_repository_is_no_gap(self):
+        # A CLAUDE.md that links to AGENTS.md made every scan of one repository "incomplete".
+        if setup_secrets.check()["status"] != "prerequisites-ready":
+            self.skipTest("Pinned Gitleaks required")
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary).resolve()
+            self.git(repo, "init", "--quiet", "--template=")
+            (repo / "AGENTS.md").write_text("Rules.\n")
+            (repo / "CLAUDE.md").symlink_to("AGENTS.md")
+            (repo / "outside.md").symlink_to("/etc/hosts")
+            self.commit(repo)
+            report = self.run_scan(repo, offline=True)
+            gaps = json.dumps(report["coverage"]["gaps"])
+            self.assertNotIn("CLAUDE.md", gaps)
+            self.assertIn("outside.md", gaps)
+
     def test_real_offline_limits_and_fetch_failures_keep_findings(self):
         if setup_secrets.check()["status"] != "prerequisites-ready":
             self.skipTest("Pinned Gitleaks required")

@@ -107,8 +107,10 @@ def history_blobs(repo, env, deadline, coverage, max_bytes):
             fields, name = record.split(b"\t", 1)
             mode, kind, oid, size = fields.split()
             metadata = {"path": os.fsdecode(name), "commit": commit, "blob": oid.decode(), "origin": "history"}
-            if kind != b"blob" or mode == b"120000":
-                coverage["gaps"].append({**metadata, "reason": "Submodule or symlink content not followed"})
+            if mode == b"120000":
+                continue  # a symlink's blob is its target path; the target, if in the repository, is a blob of its own
+            if kind != b"blob":
+                coverage["gaps"].append({**metadata, "reason": "Submodule content not followed"})
                 continue
             if metadata["blob"] in blobs:
                 continue
@@ -167,6 +169,8 @@ def working_archives(target, archives):
                 mode = path.lstat().st_mode
                 if stat.S_ISDIR(mode):
                     continue
+                if stat.S_ISLNK(mode) and path.resolve().is_relative_to(target) and path.resolve().is_file():
+                    continue  # its target is a file in the repository, scanned under its own path
                 if not stat.S_ISREG(mode):
                     archives.gap(metadata, "Symlink or special working file not followed")
                     continue

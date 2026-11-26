@@ -31,6 +31,7 @@ def main(argv=None):
     parser.add_argument("--copy", type=Path, required=True, help="temporary copy of the repository; the command runs here")
     parser.add_argument("--test", required=True, help="the proof test, relative to the copy")
     parser.add_argument("--expect", required=True, help="marker from the test's assertion message")
+    parser.add_argument("--cwd", default=".", help="folder inside the copy to run the command from (a project whose tests start in a subfolder)")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--same-copy", action="store_true",
                         help="run both attempts in the copy itself instead of a fresh copy each (for a copy too large to duplicate)")
@@ -48,7 +49,13 @@ def main(argv=None):
     if not test.is_relative_to(copy) or not test.is_file():
         parser.error("--test must name a file inside the copy")
     if not args.expect.strip() or args.expect not in test.read_text(errors="replace") or any(args.expect in part for part in command):
-        parser.error("--expect must appear in the test file and not in the command")
+        parser.error("--expect must appear literally in the test file and not in the command; for a message built with an "
+                     "f-string, give its fixed text before the first {...}")
+    if not (copy / args.cwd).resolve().is_relative_to(copy) or not (copy / args.cwd).is_dir():
+        parser.error("--cwd must name a folder inside the copy")
+    if len(command) == 1 and " " in command[0]:
+        parser.error("give the command as separate words after --, not one quoted string (a shell variable holding the "
+                     "command is not split in zsh)")
     if args.same_copy and not (args.reset or "").strip():
         parser.error("--same-copy needs --reset saying how the first attempt's state is undone")
 
@@ -62,7 +69,7 @@ def main(argv=None):
                 shutil.copytree(copy, where, symlinks=True)
             argv = [part.replace(str(copy), str(where)) for part in command]
             try:
-                done = subprocess.run(argv, cwd=where, capture_output=True, text=True, errors="replace",
+                done = subprocess.run(argv, cwd=where / args.cwd, capture_output=True, text=True, errors="replace",
                                       stdin=subprocess.DEVNULL, timeout=args.timeout)
                 runs.append({"exit": done.returncode, "marker": args.expect in done.stdout + done.stderr})
                 if not (done.returncode and runs[-1]["marker"]):
