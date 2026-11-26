@@ -15,7 +15,7 @@ Also in the bundle, written by others: [Other security skills I use](#other-secu
 
 - **Evidence over claims.** A finding is `confirmed` only when a test or a request showed it twice, from reset state. What rests on reading code is `judged`, and says so. A model rereading its own finding is not verification.
 - **Coverage is checked, not assumed.** The gap analysis lists every file and every entry point and refuses to finish while one is unread or unplaced. The DAST runner reports every route without a case and every case that did not run.
-- **Measured before kept.** Changes are driven by blind runs against a test application with an answer key, compared with the same model without the skill. See [evaluation](docs/evaluation.md), including where the skills do not yet beat the bare model.
+- **Measured before kept.** Changes are driven by blind runs against a test application with an answer key, compared with the same model without the skill.
 - **Small, bounded tools.** The runner sends only the requests its plan lists, to 127.0.0.1 or to one pre-production host named on the command line, with a request budget, a time limit and no redirects followed. Python standard library only.
 - **Test first.** Every behaviour of the scripts has a test that failed before the code was written.
 
@@ -35,7 +35,7 @@ Use it to test a running application. The agent starts a disposable copy on 127.
 
 A case can sign in and keep its session as a cookie or a bearer token, send JSON, form and multipart bodies, take a value from an answer (a JSON field, a header, a cookie, a regular expression over the page, or part of a link) and use it in a later path, header, body or assertion, compare two answers, and assert on response headers. State-changing cases run only with `--allow-writes`. `--only <case>` reruns a failed case with everything it rests on, for the reproduction a `confirmed` verdict needs. The skill lists the cases for apps that take bearer tokens from an identity provider or serve an MCP endpoint, and for injection through sort and filter parameters, stored markup, redirects, CORS, CSRF, password reset and server-side fetches.
 
-It needs Python 3.10+, Java 17+ and the pinned ZAP archive, downloaded once as [its setup](skills/local-dast/references/setup.md) describes; ZAP is not bundled. It does not crawl, drive a browser or scan actively. In remote mode (`--remote https://<host>`) the same runner tests one pre-production host that you name yourself, over verified HTTPS, and never production. The wider design is in [the DAST proposal](docs/agent-powered-dast.md).
+It needs Python 3.10+, Java 17+ and the pinned ZAP archive, downloaded once as [its setup](skills/local-dast/references/setup.md) describes; ZAP is not bundled. It does not crawl, drive a browser or scan actively. In remote mode (`--remote https://<host>`) the same runner tests one pre-production host that you name yourself, over verified HTTPS, and never production.
 
 ## Security gate
 
