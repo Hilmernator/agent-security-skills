@@ -2,7 +2,9 @@
 
 What changed in each version, newest first, and what an existing installation must do about it.
 
-## Unreleased
+## 0.5.0
+
+local-security-review finds what it can at a fixed cost and hands what it cannot decide to the owner: a list of places to walk one by one (`sinks.py`), hunting subagents on the reviewer's own model, a gate that a walked place with no check has a finding or a named guard, and owner decisions instead of dropped findings. Measured on two applications of about 85,000 and 190,000 lines (`docs/evaluation.md`). **An existing installation:** run `security.py --setup` once; it rebuilds the scanner toolchain on Python 3.14 so Bandit parses current syntax.
 
 - local-security-review: `sinks.py` also lists commands that are started (`exec`), bodies and responses read whole (`unbounded-read`) and debug or profiling surfaces (`debug`), and leaves out folders whose name ends in `-tests` or `_tests`.
 - local-security-review: an assessment may carry `owner_decision`, and the report lists such findings under "Decisions for the owner" as well as in the fix plan, so a flaw that is a shipped default or depends on the deployment is handed to the owner instead of being left out. A false-positive needs medium or high confidence (high only made reviewers raise their confidence). An incomplete scan says why in `security.py`'s summary (`why_incomplete`).
