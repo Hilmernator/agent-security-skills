@@ -161,6 +161,11 @@ def check():
         try:
             if name == "toolchain":
                 root, receipt = verified_receipt()
+                if 0 < venv_minor(root) < NEWEST_PYTHON and shutil.which("uv"):
+                    # Setup rebuilds it; until then Bandit cannot parse syntax newer than its venv's Python.
+                    checks[name] = {"status": "outdated", "path": str(root), "python": f"3.{venv_minor(root)}",
+                                    "error": f"toolchain venv is Python 3.{venv_minor(root)}; setup rebuilds it on 3.{NEWEST_PYTHON}"}
+                    continue
                 checks[name] = {"status": "available", "path": str(root),
                                 "license_inventory": str(root / "license-inventory.json"),
                                 "versions": {p["name"]: p["version"] for p in receipt["packages"]
